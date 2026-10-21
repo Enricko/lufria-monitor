@@ -1,0 +1,23 @@
+[Unit]
+Description=WattSeal power collector (headless) - https://github.com/Daminoup88/WattSeal
+After=local-fs.target
+
+[Service]
+Type=simple
+# WattSeal keeps power_monitoring.db and its log next to the executable
+ExecStart=/opt/wattseal/WattSeal-linux --headless
+WorkingDirectory=/opt/wattseal
+Restart=always
+RestartSec=5
+Nice=5
+ProtectSystem=strict
+ReadWritePaths=/opt/wattseal
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+# No /dev/nvidia*: WattSeal would poll NVML every second and keep the dGPU from ever
+# sleeping. The root helper reads the GPU instead, only while it is already awake.
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target

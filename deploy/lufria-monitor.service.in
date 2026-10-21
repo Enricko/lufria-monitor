@@ -1,0 +1,18 @@
+# Generated into /etc/systemd/system by deploy/install.sh (fills in user, app dir, host, port, docker group).
+[Unit]
+Description=Lufria Monitor web dashboard
+After=network-online.target lufria-monitor-helper.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+@DOCKER_GROUP@
+WorkingDirectory=@APP_DIR@/backend
+ExecStart=@APP_DIR@/backend/.venv/bin/uvicorn app.main:app --host @HOST@ --port @PORT@ --no-access-log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

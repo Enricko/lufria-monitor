@@ -1,0 +1,16 @@
+# runtime data and secrets: SQLite history, password hash + session key
+data/
+# third-party binaries (Ookla speedtest CLI is not redistributable)
+bin/
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+*.log
+.DS_Store

@@ -1,0 +1,22 @@
+[Unit]
+Description=Lufria Monitor root helper (RAPL power + SMART)
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/lufria-monitor/lufria-monitor-helper.py
+RuntimeDirectory=lufria-monitor
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+Restart=always
+RestartSec=5
+Nice=10
+ProtectSystem=strict
+ProtectHome=yes
+# WattSeal DB is WAL: a mode=ro reader still needs to write the -shm index
+ReadWritePaths=/opt/wattseal
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,75 @@
+@import "@fontsource/fira-sans/400.css";
+@import "@fontsource/fira-sans/500.css";
+@import "@fontsource/fira-sans/600.css";
+@import "@fontsource/fira-code/400.css";
+@import "@fontsource/fira-code/500.css";
+@import "tailwindcss";
+
+/* Dark OLED design system (ui-ux-pro-max: "Dark Mode (OLED)" + Fira Sans / Fira Code).
+   Chart series colors live in src/palette.ts (validated with dataviz/validate_palette.js). */
+@theme {
+  --color-bg: #020617;
+  --color-surface: #0f172a;
+  --color-surface-2: #1e293b;
+  --color-line: #1e293b;
+  --color-line-strong: #334155;
+  --color-fg: #f8fafc;
+  --color-fg-2: #cbd5e1;
+  --color-muted: #94a3b8;
+  --color-accent: #22c55e;
+  --color-good: #22c55e;
+  --color-warn: #f59e0b;
+  --color-bad: #ef4444;
+  --font-sans: "Fira Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Columns of numbers align; big standalone numbers keep proportional figures */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: rgb(34 197 94 / 0.3);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
