@@ -49,9 +49,11 @@ function Gate() {
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>(tabFromHash);
   const [terminalOpened, setTerminalOpened] = useState(false);
+  const [claudeOpened, setClaudeOpened] = useState(tab === "claude");
   const { live, connected, history } = useLive();
 
   if (tab === "terminal" && !terminalOpened) setTerminalOpened(true);
+  if (tab === "claude" && !claudeOpened) setClaudeOpened(true);
 
   useEffect(() => {
     const onHash = () => {
@@ -79,7 +81,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       {tab === "network" && <Network live={live} history={history} />}
       {tab === "services" && <Services />}
       {tab === "settings" && <Settings />}
-      {tab === "claude" && <Claude active={tab === "claude"} />}
+      {/* Stays mounted once opened, so Claude Code continues running in background when navigating menus */}
+      {claudeOpened && (
+        <div hidden={tab !== "claude"} className="h-full w-full">
+          <Claude active={tab === "claude"} />
+        </div>
+      )}
       {/* Stays mounted once opened, so its shells and scrollback survive switching tabs */}
       {terminalOpened && (
         <div hidden={tab !== "terminal"}>

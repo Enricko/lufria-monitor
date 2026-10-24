@@ -325,12 +325,15 @@ async def handle_ws(ws: WebSocket):
                 continue
 
             if kind == "resume":
-                # Client is telling us which session to continue (after page refresh)
-                await cancel_current()
+                # Client is telling us which session to continue (after page refresh or session switch)
                 given_sid = msg.get("session_id") or None
                 if given_sid is not None and not isinstance(given_sid, str):
                     await send(json.dumps({"type": "status", "state": "error", "msg": "Invalid session ID"}))
                     continue
+                # If switching sessions, detach without killing previous session so it completes in background
+                if given_sid != session_id:
+                    current_proc = None
+                    current_task = None
                 binding = await asyncio.to_thread(claude_sessions.get_session_binding, given_sid) if given_sid else None
                 session_id = given_sid
                 session_model = binding.get("model") if binding else None
@@ -406,4 +409,8 @@ async def handle_ws(ws: WebSocket):
         except Exception:
             pass
     finally:
-        await cancel_current()
+        # Keep background Claude Code subprocess running even if client WebSocket disconnects
+        # (e.g. page refresh, network drop, or tab close).
+        # Subprocess writes outputs safely to ~/.claude session files.
+        # Process cancellation is reserved for explicit user 'interrupt'.
+        pass

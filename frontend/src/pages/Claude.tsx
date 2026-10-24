@@ -1414,7 +1414,6 @@ export function Claude({ active }: { active: boolean }) {
   }, [input]);
 
   const newChat = useCallback(() => {
-    if (connStateRef.current === "thinking") return;
     if (window.innerWidth < 1024) setSidebarOpen(false);
     setSessionSource("claude");
     detailGenerationRef.current++;
@@ -1570,7 +1569,6 @@ export function Claude({ active }: { active: boolean }) {
   }, []);
 
   const loadSessionDetail = useCallback(async (session: Pick<UnifiedSession, "id" | "engine" | "model">) => {
-    if (connStateRef.current === "thinking") return;
     const changingSession = bindingTargetRef.current?.id !== session.id || bindingTargetRef.current.engine !== session.engine;
     const requestGeneration = ++detailGenerationRef.current;
     const selectionGeneration = selectionGenerationRef.current;
@@ -1586,6 +1584,8 @@ export function Claude({ active }: { active: boolean }) {
       setSessionModel(null);
       setTurnUsages(new Map());
       assistantIndexRef.current = -1;
+      connStateRef.current = "idle";
+      setClaudeConnState("idle");
     }
     try {
       if (session.engine === "claude") localStorage.setItem(SESSION_KEY, session.id);
