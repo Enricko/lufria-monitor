@@ -50,6 +50,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>(tabFromHash);
   const [terminalOpened, setTerminalOpened] = useState(false);
   const [claudeOpened, setClaudeOpened] = useState(tab === "claude");
+  const [isClaudeRunning, setIsClaudeRunning] = useState(false);
   const { live, connected, history } = useLive();
 
   if (tab === "terminal" && !terminalOpened) setTerminalOpened(true);
@@ -73,23 +74,27 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   };
 
   return (
-    <Shell tab={tab} live={live} connected={connected} onLogout={logout}>
-      {tab === "overview" && <Overview live={live} history={history} />}
-      {tab === "system" && <System live={live} history={history} />}
-      {tab === "power" && <Power live={live} history={history} />}
-      {tab === "storage" && <Storage live={live} />}
-      {tab === "network" && <Network live={live} history={history} />}
-      {tab === "services" && <Services />}
-      {tab === "settings" && <Settings />}
+    <Shell tab={tab} live={live} connected={connected} onLogout={logout} isClaudeRunning={isClaudeRunning}>
+      {tab !== "claude" && tab !== "terminal" && (
+        <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8">
+          {tab === "overview" && <Overview live={live} history={history} />}
+          {tab === "system" && <System live={live} history={history} />}
+          {tab === "power" && <Power live={live} history={history} />}
+          {tab === "storage" && <Storage live={live} />}
+          {tab === "network" && <Network live={live} history={history} />}
+          {tab === "services" && <Services />}
+          {tab === "settings" && <Settings />}
+        </div>
+      )}
       {/* Stays mounted once opened, so Claude Code continues running in background when navigating menus */}
       {claudeOpened && (
-        <div hidden={tab !== "claude"} className="h-full w-full">
-          <Claude active={tab === "claude"} />
+        <div hidden={tab !== "claude"} className="h-full w-full min-h-0">
+          <Claude active={tab === "claude"} onRunningChange={setIsClaudeRunning} />
         </div>
       )}
       {/* Stays mounted once opened, so its shells and scrollback survive switching tabs */}
       {terminalOpened && (
-        <div hidden={tab !== "terminal"}>
+        <div hidden={tab !== "terminal"} className="h-full w-full min-h-0">
           <Suspense fallback={null}>
             <Terminal active={tab === "terminal"} />
           </Suspense>

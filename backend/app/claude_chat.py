@@ -271,6 +271,10 @@ async def _run_turn(
     return captured_sid, proc
 
 
+# Background running sessions tracker
+ACTIVE_SESSIONS: set[str] = set()
+
+
 async def handle_ws(ws: WebSocket):
     await ws.accept()
     await ws.send_text(json.dumps({"type": "status", "state": "idle", "msg": "ready"}))
@@ -282,7 +286,10 @@ async def handle_ws(ws: WebSocket):
     current_task: asyncio.Task | None = None
 
     async def send(raw: str):
-        await ws.send_text(raw)
+        try:
+            await ws.send_text(raw)
+        except Exception:
+            pass
 
     async def cancel_current():
         nonlocal current_proc, current_task
@@ -338,6 +345,8 @@ async def handle_ws(ws: WebSocket):
                 session_id = given_sid
                 session_model = binding.get("model") if binding else None
                 session_provider_id = binding.get("provider_id") if binding else None
+                if given_sid and given_sid in ACTIVE_SESSIONS:
+                    await send(json.dumps({"type": "status", "state": "thinking", "msg": "working"}))
                 continue
 
             if kind != "user":
@@ -372,13 +381,16 @@ async def handle_ws(ws: WebSocket):
 
             async def _turn():
                 nonlocal session_id, current_proc
+                if session_id:
+                    ACTIVE_SESSIONS.add(session_id)
                 try:
                     sid, proc = await _run_turn(text, images, session_id, model, first_line_fut, send, provider_id=provider_id)
                     current_proc = proc
                     if sid and sid != session_id:
                         session_id = sid
+                        ACTIVE_SESSIONS.add(sid)
                         # Tell client the session_id so it can resume after refresh
-                        await ws.send_text(json.dumps({"type": "session", "session_id": sid}))
+                        await send(json.dumps({"type": "session", "session_id": sid}))
                 except asyncio.CancelledError:
                     log.info("Turn cancelled by user")
                 except Exception as e:
@@ -389,9 +401,11 @@ async def handle_ws(ws: WebSocket):
                         "is_api_error_message": True,
                     }))
                 finally:
+                    if session_id:
+                        ACTIVE_SESSIONS.discard(session_id)
                     if not first_line_fut.done():
                         first_line_fut.set_result(None)
-                    await ws.send_text(json.dumps({"type": "status", "state": "idle", "msg": ""}))
+                    await send(json.dumps({"type": "status", "state": "idle", "msg": ""}))
 
             current_task = asyncio.ensure_future(_turn())
             # Attach proc reference as early as possible (after first stdout line)

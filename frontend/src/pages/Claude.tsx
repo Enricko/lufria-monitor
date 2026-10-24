@@ -1001,7 +1001,7 @@ function mergeUsage(c: UsageResponse | null, r: UsageResponse | null): UsageResp
 // Main page
 // ---------------------------------------------------------------------------
 
-export function Claude({ active }: { active: boolean }) {
+export function Claude({ active, onRunningChange }: { active: boolean; onRunningChange?: (running: boolean) => void }) {
   // All active conversations use Claude Code. Legacy conversations are read-only.
   const [sessionSource, setSessionSource] = useState<SessionSource>("claude");
   const isArchived = sessionSource === "router";
@@ -1058,6 +1058,10 @@ export function Claude({ active }: { active: boolean }) {
   const connState = claudeConnState;
   const connStateRef = useRef(connState);
   connStateRef.current = connState;
+
+  useEffect(() => {
+    onRunningChange?.(connState === "thinking");
+  }, [connState, onRunningChange]);
 
   const claudeWsRef = useRef<WebSocket | null>(null);
   const claudeReconnRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -1816,7 +1820,18 @@ export function Claude({ active }: { active: boolean }) {
               <Menu size={18} />
             </button>
             <div className="min-w-0 flex-1">
-              <h1 className="text-sm font-semibold text-fg truncate">{isArchived ? "Conversation archive" : "Claude Code"}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-semibold text-fg truncate">{isArchived ? "Conversation archive" : "Claude Code"}</h1>
+                {connState === "thinking" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/20 px-2.5 py-0.5 text-[10px] font-semibold text-accent border border-accent/40 shadow-sm animate-pulse shrink-0">
+                    <span className="relative flex size-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75"></span>
+                      <span className="relative inline-flex size-1.5 rounded-full bg-accent"></span>
+                    </span>
+                    Running
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-muted truncate">{chatTitle}</p>
             </div>
           </div>

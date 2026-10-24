@@ -43,12 +43,13 @@ function Logo() {
   );
 }
 
-export function Shell({ tab, live, connected, onLogout, children }: {
+export function Shell({ tab, live, connected, onLogout, children, isClaudeRunning = false }: {
   tab: Tab;
   live: Live | null;
   connected: boolean;
   onLogout: () => void;
   children: ReactNode;
+  isClaudeRunning?: boolean;
 }) {
   return (
     <div className={tab === "claude" ? "flex h-dvh min-h-0 flex-col overflow-hidden" : "min-h-screen"}>
@@ -68,7 +69,16 @@ export function Shell({ tab, live, connected, onLogout, children }: {
               }`}
             >
               <Icon size={18} aria-hidden className={tab === id ? "text-accent" : ""} />
-              {label}
+              <span className="truncate">{label}</span>
+              {id === "claude" && isClaudeRunning && (
+                <span className="ml-auto flex items-center gap-1.5 rounded-full bg-accent/20 px-2 py-0.5 text-[10px] font-semibold text-accent border border-accent/40 shadow-sm animate-pulse shrink-0">
+                  <span className="relative flex size-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75"></span>
+                    <span className="relative inline-flex size-1.5 rounded-full bg-accent"></span>
+                  </span>
+                  Running
+                </span>
+              )}
             </a>
           ))}
         </nav>
@@ -126,16 +136,19 @@ export function Shell({ tab, live, connected, onLogout, children }: {
             >
               <Icon size={16} aria-hidden className={tab === id ? "text-accent" : ""} />
               {label}
+              {id === "claude" && isClaudeRunning && (
+                <span className="relative flex size-2 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75"></span>
+                  <span className="relative inline-flex size-2 rounded-full bg-accent"></span>
+                </span>
+              )}
             </a>
           ))}
         </nav>
       </header>
 
-      <main className={tab === "claude" ? "min-h-0 flex-1 overflow-hidden lg:pl-60" : "lg:pl-60"}>
-        {(tab as string) === "claude"
-          ? <div className="h-full min-h-0">{children}</div>
-          : <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8">{children}</div>
-        }
+      <main className={`min-h-0 flex-1 lg:pl-60 ${tab === "claude" ? "overflow-hidden" : ""}`}>
+        {children}
       </main>
     </div>
   );
