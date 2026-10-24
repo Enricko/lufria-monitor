@@ -1,0 +1,66 @@
+{
+  "scenario": "restore-manual",
+  "passed": true,
+  "results": [
+    {
+      "name": "initial restore respects pending explicit choice",
+      "passed": true,
+      "actual": {
+        "model": "shared-model",
+        "provider_id": "lufria"
+      }
+    },
+    {
+      "name": "initial restore sends exact manually selected pair",
+      "passed": true,
+      "actual": [
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "lufria"
+        }
+      ]
+    },
+    {
+      "name": "binding hydration retains one Claude Code socket",
+      "passed": true,
+      "actual": [
+        "ws://127.0.0.1:8897/ws/claude"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/claude/sessions",
+      "released": true
+    },
+    {
+      "path": "/api/claude/sessions/agent-1",
+      "released": true
+    }
+  ],
+  "sockets": [
+    {
+      "url": "ws://127.0.0.1:8897/ws/claude",
+      "sent": [
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "lufria"
+        }
+      ]
+    }
+  ]
+}

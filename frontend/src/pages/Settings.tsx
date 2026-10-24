@@ -2,6 +2,7 @@ import { Check, Cog, PlugZap, Save } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, usePoll } from "../api";
 import { Passkeys } from "../components/Passkeys";
+import { ProviderSettings } from "../components/ProviderSettings";
 import { Button, Card, PageHeader, Skeleton } from "../components/ui";
 import { rupiahFine } from "../format";
 
@@ -65,7 +66,8 @@ export function Settings() {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader title="Settings" description="Tariff, power model, monitoring and sign-in" />
+      <PageHeader title="Settings" description="AI providers, tariff, power model, monitoring and sign-in" />
+      <ProviderSettings />
       <form onSubmit={save}>
 
       <Card title="Electricity (PLN)" icon={PlugZap}>

@@ -1,0 +1,225 @@
+{
+  "viewports": [
+    {
+      "width": 320,
+      "height": 844,
+      "pageWidth": 320,
+      "pageHeight": 844,
+      "composer": {
+        "x": 60,
+        "y": 769,
+        "width": 200,
+        "height": 44,
+        "top": 769,
+        "right": 260,
+        "bottom": 813,
+        "left": 60
+      },
+      "send": {
+        "x": 266,
+        "y": 767,
+        "width": 44,
+        "height": 44,
+        "top": 767,
+        "right": 310,
+        "bottom": 811,
+        "left": 266
+      },
+      "sidebar": {
+        "x": 0,
+        "y": 109,
+        "width": 280,
+        "height": 735,
+        "top": 109,
+        "right": 280,
+        "bottom": 844,
+        "left": 0
+      },
+      "errors": [],
+      "noOverflow": true,
+      "composerVisible": true,
+      "touchTarget": true,
+      "dialogFocus": true,
+      "modalOverflow": false,
+      "escapeCloses": true
+    },
+    {
+      "width": 375,
+      "height": 844,
+      "pageWidth": 375,
+      "pageHeight": 844,
+      "composer": {
+        "x": 60,
+        "y": 769,
+        "width": 255,
+        "height": 44,
+        "top": 769,
+        "right": 315,
+        "bottom": 813,
+        "left": 60
+      },
+      "send": {
+        "x": 321,
+        "y": 767,
+        "width": 44,
+        "height": 44,
+        "top": 767,
+        "right": 365,
+        "bottom": 811,
+        "left": 321
+      },
+      "sidebar": {
+        "x": 0,
+        "y": 109,
+        "width": 280,
+        "height": 735,
+        "top": 109,
+        "right": 280,
+        "bottom": 844,
+        "left": 0
+      },
+      "errors": [],
+      "noOverflow": true,
+      "composerVisible": true,
+      "touchTarget": true,
+      "dialogFocus": true,
+      "modalOverflow": false,
+      "escapeCloses": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "pageWidth": 390,
+      "pageHeight": 844,
+      "composer": {
+        "x": 60,
+        "y": 769,
+        "width": 270,
+        "height": 44,
+        "top": 769,
+        "right": 330,
+        "bottom": 813,
+        "left": 60
+      },
+      "send": {
+        "x": 336,
+        "y": 767,
+        "width": 44,
+        "height": 44,
+        "top": 767,
+        "right": 380,
+        "bottom": 811,
+        "left": 336
+      },
+      "sidebar": {
+        "x": 0,
+        "y": 109,
+        "width": 1,
+        "height": 735,
+        "top": 109,
+        "right": 1,
+        "bottom": 844,
+        "left": 0
+      },
+      "errors": [],
+      "noOverflow": true,
+      "composerVisible": true,
+      "touchTarget": true,
+      "dialogFocus": true,
+      "modalOverflow": false,
+      "escapeCloses": true
+    },
+    {
+      "width": 768,
+      "height": 844,
+      "pageWidth": 768,
+      "pageHeight": 844,
+      "composer": {
+        "x": 68,
+        "y": 769,
+        "width": 632,
+        "height": 44,
+        "top": 769,
+        "right": 700,
+        "bottom": 813,
+        "left": 68
+      },
+      "send": {
+        "x": 708,
+        "y": 767,
+        "width": 44,
+        "height": 44,
+        "top": 767,
+        "right": 752,
+        "bottom": 811,
+        "left": 708
+      },
+      "sidebar": {
+        "x": 0,
+        "y": 119,
+        "width": 1,
+        "height": 725,
+        "top": 119,
+        "right": 1,
+        "bottom": 844,
+        "left": 0
+      },
+      "errors": [],
+      "noOverflow": true,
+      "composerVisible": true,
+      "touchTarget": true,
+      "dialogFocus": true,
+      "modalOverflow": false,
+      "escapeCloses": true
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "pageWidth": 1440,
+      "pageHeight": 900,
+      "composer": {
+        "x": 588,
+        "y": 825,
+        "width": 784,
+        "height": 44,
+        "top": 825,
+        "right": 1372,
+        "bottom": 869,
+        "left": 588
+      },
+      "send": {
+        "x": 1380,
+        "y": 823,
+        "width": 44,
+        "height": 44,
+        "top": 823,
+        "right": 1424,
+        "bottom": 867,
+        "left": 1380
+      },
+      "sidebar": {
+        "x": 240,
+        "y": 0,
+        "width": 280,
+        "height": 900,
+        "top": 0,
+        "right": 520,
+        "bottom": 900,
+        "left": 240
+      },
+      "errors": [],
+      "noOverflow": true,
+      "composerVisible": true,
+      "touchTarget": true,
+      "dialogFocus": true,
+      "modalOverflow": false,
+      "escapeCloses": true
+    }
+  ],
+  "keyboardSizedViewport": {
+    "composerBottom": 469,
+    "height": 500,
+    "reduced": true,
+    "errors": []
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "results": [
+    {
+      "name": "no provider filter tabs",
+      "passed": true
+    },
+    {
+      "name": "only Claude Code socket",
+      "passed": true,
+      "detail": "ws://127.0.0.1:8897/ws/claude"
+    },
+    {
+      "name": "legacy browser engine not restored",
+      "passed": true
+    },
+    {
+      "name": "archived history remains listed",
+      "passed": true
+    },
+    {
+      "name": "page refresh restores active model",
+      "passed": true
+    },
+    {
+      "name": "agent session restores its model",
+      "passed": true
+    },
+    {
+      "name": "archive opens without old engine",
+      "passed": true
+    },
+    {
+      "name": "archive is read only",
+      "passed": true
+    },
+    {
+      "name": "send includes exact provider",
+      "passed": true
+    },
+    {
+      "name": "send uses Claude Code model payload",
+      "passed": true
+    },
+    {
+      "name": "in-flight composer remains disabled after init",
+      "passed": true
+    },
+    {
+      "name": "tool output stays collapsed",
+      "passed": true
+    },
+    {
+      "name": "streamed response renders",
+      "passed": true
+    },
+    {
+      "name": "one user send",
+      "passed": true
+    },
+    {
+      "name": "no provider split copy",
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "sockets": [
+    {
+      "url": "ws://127.0.0.1:8897/ws/claude",
+      "sent": [
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "resume",
+          "session_id": ""
+        },
+        {
+          "type": "user",
+          "text": "Component regression test",
+          "images": [],
+          "model": "ag/gemini-3.8-flash",
+          "provider_id": "lufria"
+        }
+      ]
+    }
+  ]
+}

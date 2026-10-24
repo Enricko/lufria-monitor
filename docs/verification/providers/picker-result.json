@@ -1,0 +1,79 @@
+{
+  "picker": {
+    "passed": true,
+    "results": [
+      {
+        "name": "native model select replaced",
+        "passed": true
+      },
+      {
+        "name": "bounded searchable picker opens",
+        "passed": true
+      },
+      {
+        "name": "provider groups shown",
+        "passed": true
+      },
+      {
+        "name": "duplicate model kept per provider",
+        "passed": true,
+        "actual": 2
+      },
+      {
+        "name": "provider pair saved exactly",
+        "passed": true
+      },
+      {
+        "name": "selection closes picker",
+        "passed": true
+      },
+      {
+        "name": "selected provider is explicit",
+        "passed": true
+      },
+      {
+        "name": "refresh exposes new model",
+        "passed": true
+      },
+      {
+        "name": "search empty state",
+        "passed": true
+      },
+      {
+        "name": "manage providers links to Settings",
+        "passed": true
+      },
+      {
+        "name": "picker fits viewport",
+        "passed": true,
+        "actual": {
+          "x": 360,
+          "y": 46.15625,
+          "width": 560,
+          "height": 261,
+          "top": 46.15625,
+          "right": 920,
+          "bottom": 307.15625,
+          "left": 360
+        }
+      },
+      {
+        "name": "close restores trigger focus",
+        "passed": true
+      },
+      {
+        "name": "selected duplicate sends to Binav",
+        "passed": true
+      },
+      {
+        "name": "same-session provider switch uses Lufria",
+        "passed": true
+      },
+      {
+        "name": "provider switch does not reopen second engine",
+        "passed": true
+      }
+    ]
+  },
+  "errors": []
+}

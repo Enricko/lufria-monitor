@@ -1,0 +1,62 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "all spacing fixtures rendered",
+      "passed": true,
+      "actual": 5
+    },
+    {
+      "name": "no blank-line BRs around tool cards",
+      "passed": true
+    },
+    {
+      "name": "no leading or trailing BR in prose",
+      "passed": true
+    },
+    {
+      "name": "collapsed tool messages at most 60px",
+      "passed": true,
+      "actual": [
+        38,
+        38,
+        38
+      ]
+    },
+    {
+      "name": "tool header top inset at most 8px",
+      "passed": true,
+      "actual": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "tool cards start collapsed",
+      "passed": true
+    },
+    {
+      "name": "markdown separator rendered",
+      "passed": true
+    },
+    {
+      "name": "paragraph gaps capped at 12px",
+      "passed": true,
+      "actual": 6.390625
+    },
+    {
+      "name": "code blank lines and indentation preserved",
+      "passed": true
+    },
+    {
+      "name": "expanded tool output preserved",
+      "passed": true
+    },
+    {
+      "name": "empty tool has explicit compact message",
+      "passed": true
+    }
+  ],
+  "errors": []
+}

@@ -11,6 +11,7 @@ import { Services } from "./pages/Services";
 import { Settings } from "./pages/Settings";
 import { Storage } from "./pages/Storage";
 import { System } from "./pages/System";
+import { Claude } from "./pages/Claude";
 
 // xterm.js is the largest dependency; only load it when the Terminal tab is opened
 const Terminal = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.Terminal })));
@@ -78,6 +79,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       {tab === "network" && <Network live={live} history={history} />}
       {tab === "services" && <Services />}
       {tab === "settings" && <Settings />}
+      {tab === "claude" && <Claude active={tab === "claude"} />}
       {/* Stays mounted once opened, so its shells and scrollback survive switching tabs */}
       {terminalOpened && (
         <div hidden={tab !== "terminal"}>

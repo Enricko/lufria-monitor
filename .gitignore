@@ -1,7 +1,15 @@
 # runtime data and secrets: SQLite history, password hash + session key
-data/
+data/*
+!data/.gitkeep
+!data/*.example.json
+
+# environment secrets
+.env
+.env.local
+
 # third-party binaries (Ookla speedtest CLI is not redistributable)
-bin/
+bin/speedtest
+bin/__pycache__/
 
 # Python
 backend/.venv/

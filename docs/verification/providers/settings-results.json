@@ -1,0 +1,74 @@
+{
+  "complete": true,
+  "results": [
+    {
+      "name": "renders real provider manager with safe host and credential status",
+      "passed": true
+    },
+    {
+      "name": "creates a no-auth provider with explicit enabled and verified readback",
+      "passed": true
+    },
+    {
+      "name": "edits with a blank API key preserving the existing key",
+      "passed": true
+    },
+    {
+      "name": "refreshes one provider and verifies newly discovered model count",
+      "passed": true
+    },
+    {
+      "name": "preserves provider list and displays server error when global refresh fails",
+      "passed": true
+    },
+    {
+      "name": "global refresh summarizes partial failures and preserves usable models",
+      "passed": true
+    },
+    {
+      "name": "individual refresh ignores unrelated provider snapshot changes",
+      "passed": true
+    },
+    {
+      "name": "requires explicit delete confirmation and cancel keeps the provider",
+      "passed": true
+    },
+    {
+      "name": "deletes provider only after confirmation and verifies exact removal",
+      "passed": true
+    },
+    {
+      "name": "does not claim saved or notify when the exact target readback disagrees",
+      "passed": true
+    },
+    {
+      "name": "redacts fixture credentials from API errors without browser storage",
+      "passed": true
+    },
+    {
+      "name": "Escape closes editor and returns focus without submitting",
+      "passed": true
+    },
+    {
+      "name": "refresh loading state disables controls until verified readback",
+      "passed": true
+    },
+    {
+      "name": "empty provider catalog explains how to add a provider",
+      "passed": true
+    },
+    {
+      "name": "failed initial catalog load can be retried without page reload",
+      "passed": true
+    },
+    {
+      "name": "save succeeds when verification GET discovers new models",
+      "passed": true
+    },
+    {
+      "name": "Settings renders provider manager above electricity as a separate form",
+      "passed": true
+    }
+  ],
+  "errors": []
+}

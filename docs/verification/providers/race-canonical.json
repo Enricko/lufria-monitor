@@ -1,0 +1,74 @@
+{
+  "scenario": "canonical",
+  "passed": true,
+  "results": [
+    {
+      "name": "canonical detail pair beats older sidebar pair on session change",
+      "passed": true,
+      "actual": {
+        "model": "shared-model",
+        "provider_id": "omo"
+      }
+    },
+    {
+      "name": "late stale list refresh cannot replace canonical binding",
+      "passed": true,
+      "actual": {
+        "model": "shared-model",
+        "provider_id": "omo"
+      }
+    },
+    {
+      "name": "next turn uses canonical detail pair",
+      "passed": true,
+      "actual": [
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "omo"
+        }
+      ]
+    },
+    {
+      "name": "binding hydration retains one Claude Code socket",
+      "passed": true,
+      "actual": [
+        "ws://127.0.0.1:8897/ws/claude"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/claude/sessions",
+      "released": true
+    },
+    {
+      "path": "/api/claude/sessions/agent-1",
+      "released": true
+    },
+    {
+      "path": "/api/claude/sessions",
+      "released": true
+    }
+  ],
+  "sockets": [
+    {
+      "url": "ws://127.0.0.1:8897/ws/claude",
+      "sent": [
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "omo"
+        }
+      ]
+    }
+  ]
+}

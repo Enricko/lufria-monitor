@@ -1,0 +1,91 @@
+{
+  "qa": {
+    "results": [
+      {
+        "name": "no provider filter tabs",
+        "passed": true
+      },
+      {
+        "name": "only Claude Code socket",
+        "passed": true,
+        "detail": "ws://127.0.0.1:8897/ws/claude"
+      },
+      {
+        "name": "legacy browser engine not restored",
+        "passed": true
+      },
+      {
+        "name": "archived history remains listed",
+        "passed": true
+      },
+      {
+        "name": "page refresh restores active model",
+        "passed": true
+      },
+      {
+        "name": "agent session restores its model",
+        "passed": true
+      },
+      {
+        "name": "archive opens without old engine",
+        "passed": true
+      },
+      {
+        "name": "archive is read only",
+        "passed": true
+      },
+      {
+        "name": "send uses Claude Code model payload",
+        "passed": true
+      },
+      {
+        "name": "in-flight composer remains disabled after init",
+        "passed": true
+      },
+      {
+        "name": "tool output stays collapsed",
+        "passed": true
+      },
+      {
+        "name": "streamed response renders",
+        "passed": true
+      },
+      {
+        "name": "one user send",
+        "passed": true
+      },
+      {
+        "name": "no provider split copy",
+        "passed": true
+      }
+    ],
+    "passed": true,
+    "sockets": [
+      {
+        "url": "ws://127.0.0.1:8897/ws/claude",
+        "sent": [
+          {
+            "type": "resume",
+            "session_id": "agent-1"
+          },
+          {
+            "type": "resume",
+            "session_id": "agent-1"
+          },
+          {
+            "type": "resume",
+            "session_id": ""
+          },
+          {
+            "type": "user",
+            "text": "Component regression test",
+            "images": [],
+            "model": "ag/gemini-3.8-flash"
+          }
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "text": "Sessions\n2\nUSAGE & COST\nHistory\nToday\nWeek\nMonth\nAll\nEst. Price\n$0.0200\nTotal Tokens\n240\n\u2191200\n\u00b7\n\u219340\n\u00b7\ncache 0\n\nAgent project\n\nGemini 3.8\njust now\n2\n\nArchived conversation\n\nGemini 3.8\nArchive\n3m ago\n2\nClaude Code\n\nSession new-agen\u2026\n\nMODEL\nGemini 3.8\nU\n\nComponent regression test\n\n\n\n\n\u25b6\n\u26a1 Bash\npwd\n\n\n\nUI fixture response\n\nClaude Code \u00b7 Enter to send \u00b7 Shift+Enter for a new line"
+}

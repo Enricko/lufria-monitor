@@ -1,0 +1,142 @@
+[
+  {
+    "width": 320,
+    "pageWidth": 310,
+    "buttons": [
+      {
+        "text": "Add provider",
+        "h": 44
+      },
+      {
+        "text": "Refresh all models",
+        "h": 44
+      },
+      {
+        "text": "Edit",
+        "h": 44
+      },
+      {
+        "text": "Refresh",
+        "h": 44
+      },
+      {
+        "text": "Delete",
+        "h": 44
+      }
+    ],
+    "errors": [],
+    "noOverflow": true
+  },
+  {
+    "width": 375,
+    "pageWidth": 365,
+    "buttons": [
+      {
+        "text": "Add provider",
+        "h": 44
+      },
+      {
+        "text": "Refresh all models",
+        "h": 44
+      },
+      {
+        "text": "Edit",
+        "h": 44
+      },
+      {
+        "text": "Refresh",
+        "h": 44
+      },
+      {
+        "text": "Delete",
+        "h": 44
+      }
+    ],
+    "errors": [],
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "pageWidth": 380,
+    "buttons": [
+      {
+        "text": "Add provider",
+        "h": 44
+      },
+      {
+        "text": "Refresh all models",
+        "h": 44
+      },
+      {
+        "text": "Edit",
+        "h": 44
+      },
+      {
+        "text": "Refresh",
+        "h": 44
+      },
+      {
+        "text": "Delete",
+        "h": 44
+      }
+    ],
+    "errors": [],
+    "noOverflow": true
+  },
+  {
+    "width": 768,
+    "pageWidth": 758,
+    "buttons": [
+      {
+        "text": "Add provider",
+        "h": 44
+      },
+      {
+        "text": "Refresh all models",
+        "h": 44
+      },
+      {
+        "text": "Edit",
+        "h": 44
+      },
+      {
+        "text": "Refresh",
+        "h": 44
+      },
+      {
+        "text": "Delete",
+        "h": 44
+      }
+    ],
+    "errors": [],
+    "noOverflow": true
+  },
+  {
+    "width": 1440,
+    "pageWidth": 1430,
+    "buttons": [
+      {
+        "text": "Add provider",
+        "h": 44
+      },
+      {
+        "text": "Refresh all models",
+        "h": 44
+      },
+      {
+        "text": "Edit",
+        "h": 44
+      },
+      {
+        "text": "Refresh",
+        "h": 44
+      },
+      {
+        "text": "Delete",
+        "h": 44
+      }
+    ],
+    "errors": [],
+    "noOverflow": true
+  }
+]

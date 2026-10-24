@@ -1,0 +1,20 @@
+{
+  "index_match": true,
+  "assets": [
+    {
+      "path": "/assets/index-DmSUEPQv.js",
+      "sha256": "7fbdf75a7c72056c3f9e5c30d6a3a58fbd632887e75270667fc745fb6f5f9afe",
+      "match": true
+    },
+    {
+      "path": "/assets/index-CsnKGAIz.css",
+      "sha256": "1704af0e78845605ece9f514efb3acc975b00735add0295464c0ce072436c536",
+      "match": true
+    }
+  ],
+  "provider_routes_registered": true,
+  "/api/providers_unauth_status": 401,
+  "/api/router/models_unauth_status": 401,
+  "service": "active",
+  "pid": 686718
+}

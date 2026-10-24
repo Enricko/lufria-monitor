@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Cpu, Gauge, HardDrive, LogOut, Network, Server, Settings, SquareTerminal, Zap } from "lucide-react";
+import { Bot, Cpu, Gauge, HardDrive, LogOut, Network, Server, Settings, SquareTerminal, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { usePoll, type Live } from "../api";
 import { watts } from "../format";
@@ -12,6 +12,7 @@ export const NAV = [
   { id: "network", label: "Network", icon: Network },
   { id: "services", label: "Services", icon: Server },
   { id: "terminal", label: "Terminal", icon: SquareTerminal },
+  { id: "claude", label: "Claude Code", icon: Bot },
   { id: "settings", label: "Settings", icon: Settings },
 ] as const satisfies readonly { id: string; label: string; icon: LucideIcon }[];
 
@@ -50,7 +51,7 @@ export function Shell({ tab, live, connected, onLogout, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="min-h-screen">
+    <div className={tab === "claude" ? "flex h-dvh min-h-0 flex-col overflow-hidden" : "min-h-screen"}>
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-line bg-bg px-3 py-5 lg:flex">
         <div className="px-2">
@@ -98,7 +99,7 @@ export function Shell({ tab, live, connected, onLogout, children }: {
       </aside>
 
       {/* Mobile top bar + tabs */}
-      <header className="sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur lg:hidden">
+      <header className="monitor-mobile-header sticky top-0 z-20 shrink-0 border-b border-line bg-bg/90 backdrop-blur lg:hidden">
         <div className="flex h-14 items-center justify-between px-4">
           <Logo />
           <div className="flex items-center gap-1">
@@ -130,8 +131,11 @@ export function Shell({ tab, live, connected, onLogout, children }: {
         </nav>
       </header>
 
-      <main className="lg:pl-60">
-        <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8">{children}</div>
+      <main className={tab === "claude" ? "min-h-0 flex-1 overflow-hidden lg:pl-60" : "lg:pl-60"}>
+        {(tab as string) === "claude"
+          ? <div className="h-full min-h-0">{children}</div>
+          : <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8">{children}</div>
+        }
       </main>
     </div>
   );

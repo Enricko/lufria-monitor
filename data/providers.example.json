@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "lufria",
+      "name": "Lufria Router",
+      "base_url": "https://9router.lufria.tech/v1",
+      "key_env": "HERMES_CUSTOM_9ROUTER_LUFRIA_TECH_API_KEY",
+      "api_key": "",
+      "enabled": true,
+      "models": [
+        { "id": "AntiGravity-Tops", "name": "AntiGravity-Tops", "context_window": 128000 },
+        { "id": "Claude-Opus-4.5", "name": "Claude-Opus-4.5", "context_window": 200000 },
+        { "id": "Gemini-2.5-Flash", "name": "Gemini-2.5-Flash", "context_window": 1000000 },
+        { "id": "DeepSeek-R1", "name": "DeepSeek-R1", "context_window": 64000 }
+      ]
+    },
+    {
+      "id": "binav",
+      "name": "Binav Router",
+      "base_url": "https://router.binav.id/v1",
+      "key_env": "HERMES_CUSTOM_ROUTER_BINAV_ID_API_KEY",
+      "api_key": "",
+      "enabled": true,
+      "models": [
+        { "id": "Claude-Sonnet-3.7", "name": "Claude-Sonnet-3.7", "context_window": 200000 },
+        { "id": "GPT-4o", "name": "GPT-4o", "context_window": 128000 }
+      ]
+    },
+    {
+      "id": "omo",
+      "name": "OMO API HUB",
+      "base_url": "https://omoapicall.web.id/v1",
+      "key_env": "HERMES_CUSTOM_OMOAPICALL_WEB_ID_API_KEY",
+      "api_key": "",
+      "enabled": true,
+      "models": [
+        { "id": "DeepSeek-V3", "name": "DeepSeek-V3", "context_window": 64000 }
+      ]
+    }
+  ]
+}

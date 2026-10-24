@@ -1,0 +1,91 @@
+{
+  "scenario": "restore",
+  "passed": true,
+  "results": [
+    {
+      "name": "restore blocks Send while canonical detail and list are pending",
+      "passed": true
+    },
+    {
+      "name": "Enter before hydration never sends the unrelated global provider",
+      "passed": true,
+      "actual": []
+    },
+    {
+      "name": "saved session requests canonical detail without waiting for the list",
+      "passed": true,
+      "actual": [
+        "/api/claude/sessions",
+        "/api/claude/sessions/agent-1"
+      ]
+    },
+    {
+      "name": "canonical model/provider restored before list response",
+      "passed": true,
+      "actual": {
+        "model": "ag/gemini-3.8-flash",
+        "provider_id": "lufria"
+      }
+    },
+    {
+      "name": "composer unlocks only after canonical binding",
+      "passed": true
+    },
+    {
+      "name": "first resumed turn uses saved binding, not global Binav",
+      "passed": true,
+      "actual": [
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "ag/gemini-3.8-flash",
+          "provider_id": "lufria"
+        }
+      ]
+    },
+    {
+      "name": "picker stays disabled while the turn is in flight",
+      "passed": true
+    },
+    {
+      "name": "binding hydration retains one Claude Code socket",
+      "passed": true,
+      "actual": [
+        "ws://127.0.0.1:8897/ws/claude"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/claude/sessions",
+      "released": true
+    },
+    {
+      "path": "/api/claude/sessions/agent-1",
+      "released": true
+    }
+  ],
+  "sockets": [
+    {
+      "url": "ws://127.0.0.1:8897/ws/claude",
+      "sent": [
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "ag/gemini-3.8-flash",
+          "provider_id": "lufria"
+        }
+      ]
+    }
+  ]
+}

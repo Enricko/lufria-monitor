@@ -1,0 +1,497 @@
+[
+  {
+    "width": 320,
+    "pageWidth": 320,
+    "spacing": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "all spacing fixtures rendered",
+          "passed": true,
+          "actual": 5
+        },
+        {
+          "name": "no blank-line BRs around tool cards",
+          "passed": true
+        },
+        {
+          "name": "no leading or trailing BR in prose",
+          "passed": true
+        },
+        {
+          "name": "collapsed tool messages at most 60px",
+          "passed": true,
+          "actual": [
+            38,
+            38,
+            38
+          ]
+        },
+        {
+          "name": "tool header top inset at most 8px",
+          "passed": true,
+          "actual": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "tool cards start collapsed",
+          "passed": true
+        },
+        {
+          "name": "markdown separator rendered",
+          "passed": true
+        },
+        {
+          "name": "paragraph gaps capped at 12px",
+          "passed": true,
+          "actual": 6.390625
+        },
+        {
+          "name": "code blank lines and indentation preserved",
+          "passed": true
+        },
+        {
+          "name": "expanded tool output preserved",
+          "passed": true
+        },
+        {
+          "name": "empty tool has explicit compact message",
+          "passed": true
+        }
+      ],
+      "errors": []
+    },
+    "cardBounds": [
+      {
+        "width": 251.59375,
+        "right": 301.59375,
+        "scrollWidth": 252
+      },
+      {
+        "width": 251.59375,
+        "right": 301.59375,
+        "scrollWidth": 252
+      },
+      {
+        "width": 95.59375,
+        "right": 145.59375,
+        "scrollWidth": 96
+      }
+    ],
+    "scrollContainer": [
+      {
+        "client": 320,
+        "scroll": 320
+      }
+    ],
+    "composer": {
+      "x": 60,
+      "y": 825,
+      "width": 200,
+      "height": 44,
+      "top": 825,
+      "right": 260,
+      "bottom": 869,
+      "left": 60
+    }
+  },
+  {
+    "width": 375,
+    "pageWidth": 375,
+    "spacing": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "all spacing fixtures rendered",
+          "passed": true,
+          "actual": 5
+        },
+        {
+          "name": "no blank-line BRs around tool cards",
+          "passed": true
+        },
+        {
+          "name": "no leading or trailing BR in prose",
+          "passed": true
+        },
+        {
+          "name": "collapsed tool messages at most 60px",
+          "passed": true,
+          "actual": [
+            38,
+            38,
+            38
+          ]
+        },
+        {
+          "name": "tool header top inset at most 8px",
+          "passed": true,
+          "actual": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "tool cards start collapsed",
+          "passed": true
+        },
+        {
+          "name": "markdown separator rendered",
+          "passed": true
+        },
+        {
+          "name": "paragraph gaps capped at 12px",
+          "passed": true,
+          "actual": 6.390625
+        },
+        {
+          "name": "code blank lines and indentation preserved",
+          "passed": true
+        },
+        {
+          "name": "expanded tool output preserved",
+          "passed": true
+        },
+        {
+          "name": "empty tool has explicit compact message",
+          "passed": true
+        }
+      ],
+      "errors": []
+    },
+    "cardBounds": [
+      {
+        "width": 298.34375,
+        "right": 348.34375,
+        "scrollWidth": 298
+      },
+      {
+        "width": 298.34375,
+        "right": 348.34375,
+        "scrollWidth": 298
+      },
+      {
+        "width": 95.59375,
+        "right": 145.59375,
+        "scrollWidth": 96
+      }
+    ],
+    "scrollContainer": [
+      {
+        "client": 375,
+        "scroll": 375
+      }
+    ],
+    "composer": {
+      "x": 60,
+      "y": 825,
+      "width": 255,
+      "height": 44,
+      "top": 825,
+      "right": 315,
+      "bottom": 869,
+      "left": 60
+    }
+  },
+  {
+    "width": 390,
+    "pageWidth": 390,
+    "spacing": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "all spacing fixtures rendered",
+          "passed": true,
+          "actual": 5
+        },
+        {
+          "name": "no blank-line BRs around tool cards",
+          "passed": true
+        },
+        {
+          "name": "no leading or trailing BR in prose",
+          "passed": true
+        },
+        {
+          "name": "collapsed tool messages at most 60px",
+          "passed": true,
+          "actual": [
+            38,
+            38,
+            38
+          ]
+        },
+        {
+          "name": "tool header top inset at most 8px",
+          "passed": true,
+          "actual": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "tool cards start collapsed",
+          "passed": true
+        },
+        {
+          "name": "markdown separator rendered",
+          "passed": true
+        },
+        {
+          "name": "paragraph gaps capped at 12px",
+          "passed": true,
+          "actual": 6.390625
+        },
+        {
+          "name": "code blank lines and indentation preserved",
+          "passed": true
+        },
+        {
+          "name": "expanded tool output preserved",
+          "passed": true
+        },
+        {
+          "name": "empty tool has explicit compact message",
+          "passed": true
+        }
+      ],
+      "errors": []
+    },
+    "cardBounds": [
+      {
+        "width": 311.09375,
+        "right": 361.09375,
+        "scrollWidth": 311
+      },
+      {
+        "width": 311.09375,
+        "right": 361.09375,
+        "scrollWidth": 311
+      },
+      {
+        "width": 95.59375,
+        "right": 145.59375,
+        "scrollWidth": 96
+      }
+    ],
+    "scrollContainer": [
+      {
+        "client": 390,
+        "scroll": 390
+      }
+    ],
+    "composer": {
+      "x": 60,
+      "y": 825,
+      "width": 270,
+      "height": 44,
+      "top": 825,
+      "right": 330,
+      "bottom": 869,
+      "left": 60
+    }
+  },
+  {
+    "width": 768,
+    "pageWidth": 768,
+    "spacing": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "all spacing fixtures rendered",
+          "passed": true,
+          "actual": 5
+        },
+        {
+          "name": "no blank-line BRs around tool cards",
+          "passed": true
+        },
+        {
+          "name": "no leading or trailing BR in prose",
+          "passed": true
+        },
+        {
+          "name": "collapsed tool messages at most 60px",
+          "passed": true,
+          "actual": [
+            38,
+            38,
+            38
+          ]
+        },
+        {
+          "name": "tool header top inset at most 8px",
+          "passed": true,
+          "actual": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "tool cards start collapsed",
+          "passed": true
+        },
+        {
+          "name": "markdown separator rendered",
+          "passed": true
+        },
+        {
+          "name": "paragraph gaps capped at 12px",
+          "passed": true,
+          "actual": 6.390625
+        },
+        {
+          "name": "code blank lines and indentation preserved",
+          "passed": true
+        },
+        {
+          "name": "expanded tool output preserved",
+          "passed": true
+        },
+        {
+          "name": "empty tool has explicit compact message",
+          "passed": true
+        }
+      ],
+      "errors": []
+    },
+    "cardBounds": [
+      {
+        "width": 411.734375,
+        "right": 469.734375,
+        "scrollWidth": 412
+      },
+      {
+        "width": 594.078125,
+        "right": 652.078125,
+        "scrollWidth": 594
+      },
+      {
+        "width": 95.59375,
+        "right": 153.59375,
+        "scrollWidth": 96
+      }
+    ],
+    "scrollContainer": [
+      {
+        "client": 768,
+        "scroll": 768
+      }
+    ],
+    "composer": {
+      "x": 68,
+      "y": 825,
+      "width": 632,
+      "height": 44,
+      "top": 825,
+      "right": 700,
+      "bottom": 869,
+      "left": 68
+    }
+  },
+  {
+    "width": 1440,
+    "pageWidth": 1440,
+    "spacing": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "all spacing fixtures rendered",
+          "passed": true,
+          "actual": 5
+        },
+        {
+          "name": "no blank-line BRs around tool cards",
+          "passed": true
+        },
+        {
+          "name": "no leading or trailing BR in prose",
+          "passed": true
+        },
+        {
+          "name": "collapsed tool messages at most 60px",
+          "passed": true,
+          "actual": [
+            38,
+            38,
+            38
+          ]
+        },
+        {
+          "name": "tool header top inset at most 8px",
+          "passed": true,
+          "actual": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "tool cards start collapsed",
+          "passed": true
+        },
+        {
+          "name": "markdown separator rendered",
+          "passed": true
+        },
+        {
+          "name": "paragraph gaps capped at 12px",
+          "passed": true,
+          "actual": 6.390625
+        },
+        {
+          "name": "code blank lines and indentation preserved",
+          "passed": true
+        },
+        {
+          "name": "expanded tool output preserved",
+          "passed": true
+        },
+        {
+          "name": "empty tool has explicit compact message",
+          "passed": true
+        }
+      ],
+      "errors": []
+    },
+    "cardBounds": [
+      {
+        "width": 411.734375,
+        "right": 749.734375,
+        "scrollWidth": 412
+      },
+      {
+        "width": 594.078125,
+        "right": 932.078125,
+        "scrollWidth": 594
+      },
+      {
+        "width": 95.59375,
+        "right": 433.59375,
+        "scrollWidth": 96
+      }
+    ],
+    "scrollContainer": [
+      {
+        "client": 1160,
+        "scroll": 1160
+      }
+    ],
+    "composer": {
+      "x": 348,
+      "y": 825,
+      "width": 1024,
+      "height": 44,
+      "top": 825,
+      "right": 1372,
+      "bottom": 869,
+      "left": 348
+    }
+  }
+]

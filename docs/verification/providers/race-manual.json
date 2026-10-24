@@ -1,0 +1,75 @@
+{
+  "scenario": "manual",
+  "passed": true,
+  "results": [
+    {
+      "name": "explicit choice is stored while detail is pending",
+      "passed": true,
+      "actual": {
+        "model": "shared-model",
+        "provider_id": "binav"
+      }
+    },
+    {
+      "name": "manual choice does not bypass canonical history hydration",
+      "passed": true,
+      "actual": []
+    },
+    {
+      "name": "late detail preserves manual provider/model",
+      "passed": true,
+      "actual": {
+        "model": "shared-model",
+        "provider_id": "binav"
+      }
+    },
+    {
+      "name": "next turn honors choice made after detail request started",
+      "passed": true,
+      "actual": [
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "binav"
+        }
+      ]
+    },
+    {
+      "name": "binding hydration retains one Claude Code socket",
+      "passed": true,
+      "actual": [
+        "ws://127.0.0.1:8897/ws/claude"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/claude/sessions",
+      "released": true
+    },
+    {
+      "path": "/api/claude/sessions/agent-1",
+      "released": true
+    }
+  ],
+  "sockets": [
+    {
+      "url": "ws://127.0.0.1:8897/ws/claude",
+      "sent": [
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "binav"
+        }
+      ]
+    }
+  ]
+}

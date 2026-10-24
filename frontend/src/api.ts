@@ -100,6 +100,7 @@ export type LivePower = {
   battery: { percent: number; plugged: boolean } | null;
 };
 
+const STALE_MS = 4000; // no live message for this long -> reconnect
 const LIVE_HISTORY = 120; // seconds kept for live sparklines
 
 /** Live stream over WebSocket, with a rolling buffer for sparklines. */
@@ -112,12 +113,19 @@ export function useLive() {
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout>;
     let closed = false;
+    let lastMsg = Date.now();
+    // a stalled tunnel can leave the socket "open" with no data: reconnect if silent
+    const watchdog = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN && Date.now() - lastMsg > STALE_MS) ws.close();
+    }, 1000);
 
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+      lastMsg = Date.now();
       ws.onopen = () => setConnected(true);
       ws.onmessage = (ev) => {
+        lastMsg = Date.now();
         const snap: Live = JSON.parse(ev.data);
         history.current = [...history.current.slice(-(LIVE_HISTORY - 1)), snap];
         setLive(snap);
@@ -135,6 +143,7 @@ export function useLive() {
     return () => {
       closed = true;
       clearTimeout(retry);
+      clearInterval(watchdog);
       ws?.close();
     };
   }, []);

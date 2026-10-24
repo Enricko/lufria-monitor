@@ -1,0 +1,26 @@
+{
+  "persisted_readback_match": true,
+  "mode": "0600",
+  "providers": [
+    {
+      "id": "binav",
+      "name": "Binav Router",
+      "model_count": 47,
+      "error": null
+    },
+    {
+      "id": "lufria",
+      "name": "Lufria Router",
+      "model_count": 59,
+      "error": null
+    },
+    {
+      "id": "omo",
+      "name": "OMO API HUB",
+      "model_count": 17,
+      "error": null
+    }
+  ],
+  "model_pairs": 123,
+  "raw_ids": 79
+}

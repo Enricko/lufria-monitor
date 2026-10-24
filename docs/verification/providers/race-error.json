@@ -1,0 +1,91 @@
+{
+  "scenario": "error",
+  "passed": true,
+  "results": [
+    {
+      "name": "failed restore cannot send even after sidebar succeeds",
+      "passed": true,
+      "actual": []
+    },
+    {
+      "name": "restore failure offers Retry and New chat",
+      "passed": true
+    },
+    {
+      "name": "manual route alone cannot bypass failed history load",
+      "passed": true
+    },
+    {
+      "name": "Retry remains blocked while canonical detail is pending",
+      "passed": true
+    },
+    {
+      "name": "retry preserves same-session manual choice",
+      "passed": true,
+      "actual": {
+        "model": "shared-model",
+        "provider_id": "lufria"
+      }
+    },
+    {
+      "name": "successful retry clears failure and unlocks Send",
+      "passed": true
+    },
+    {
+      "name": "recovered session sends only after successful retry",
+      "passed": true,
+      "actual": [
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "lufria"
+        }
+      ]
+    },
+    {
+      "name": "binding hydration retains one Claude Code socket",
+      "passed": true,
+      "actual": [
+        "ws://127.0.0.1:8897/ws/claude"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/claude/sessions",
+      "released": true
+    },
+    {
+      "path": "/api/claude/sessions/agent-1",
+      "released": true
+    },
+    {
+      "path": "/api/claude/sessions/agent-1",
+      "released": true
+    }
+  ],
+  "sockets": [
+    {
+      "url": "ws://127.0.0.1:8897/ws/claude",
+      "sent": [
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "resume",
+          "session_id": "agent-1"
+        },
+        {
+          "type": "user",
+          "text": "Provider binding regression",
+          "images": [],
+          "model": "shared-model",
+          "provider_id": "lufria"
+        }
+      ]
+    }
+  ]
+}

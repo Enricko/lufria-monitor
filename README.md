@@ -70,7 +70,7 @@ On Ubuntu 24.04 or newer:
 sudo apt install python3-venv nodejs npm smartmontools
 git clone https://github.com/Enricko/lufria-monitor.git ~/monitor && cd ~/monitor
 
-deploy/bootstrap.sh                          # backend venv + frontend build (as your user)
+deploy/bootstrap.sh                          # sets up .env, example data, backend venv + frontend build
 (cd backend && .venv/bin/python -m app.auth set)   # bootstrap password, only until the first passkey
 deploy/install-speedtest.sh                  # optional: Ookla CLI into ./bin
 sudo deploy/install-wattseal.sh              # recommended: power collector (+ GTK3 runtime libs)

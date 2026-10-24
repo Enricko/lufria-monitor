@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSoc
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, db, energy, sampler, terminal
+from . import auth, claude_chat, claude_sessions, db, energy, provider_api, providers, router_chat, router_sessions, sampler, terminal
 from .collectors import services, speedtest, system
 from .config import FRONTEND_DIST, PUBLIC_ORIGIN, TARIFF_PRESETS
 
@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Lufria Monitor", lifespan=lifespan)
 app.add_middleware(auth.AuthMiddleware)
+app.include_router(provider_api.router)
 
 
 def _threaded(fn, *args):
@@ -310,17 +311,80 @@ async def ws_terminal(ws: WebSocket, sid: str, since: int | None = None):
 @app.websocket("/ws/live")
 async def ws_live(ws: WebSocket):
     await ws.accept()
-    q: asyncio.Queue = asyncio.Queue(maxsize=2)
+    q: asyncio.Queue = asyncio.Queue(maxsize=1)  # slow client: skip to the newest sample
     sampler.subscribers.add(q)
     try:
         if sampler.latest:
             await ws.send_json(sampler.latest)
         while True:
-            await ws.send_json(await q.get())
-    except (WebSocketDisconnect, RuntimeError):
+            snap = await q.get()
+            # a stalled tunnel would block here forever; drop it so the client reconnects
+            await asyncio.wait_for(ws.send_json(snap), timeout=5)
+    except (WebSocketDisconnect, RuntimeError, asyncio.TimeoutError):
         pass
     finally:
         sampler.subscribers.discard(q)
+
+
+@app.websocket("/ws/claude")
+async def ws_claude(ws: WebSocket):
+    if not auth.same_origin(ws.headers) or not auth.valid_session(ws.cookies.get(auth.COOKIE)):
+        await ws.close(4403)
+        return
+    await claude_chat.handle_ws(ws)
+
+
+@app.get("/api/claude/sessions")
+async def claude_sessions_list():
+    return await _threaded(claude_sessions.list_sessions)
+
+
+@app.get("/api/claude/sessions/{session_id}")
+async def claude_sessions_get(session_id: str):
+    return await _threaded(claude_sessions.get_session, session_id)
+
+
+@app.delete("/api/claude/sessions/{session_id}")
+async def claude_sessions_delete(session_id: str):
+    return await _threaded(claude_sessions.delete_session, session_id)
+
+
+@app.get("/api/claude/usage")
+async def claude_usage():
+    return await _threaded(claude_sessions.get_usage)
+
+
+@app.websocket("/ws/router")
+async def ws_router(ws: WebSocket):
+    if not auth.same_origin(ws.headers) or not auth.valid_session(ws.cookies.get(auth.COOKIE)):
+        await ws.close(4403)
+        return
+    await router_chat.handle_ws(ws)
+
+
+@app.get("/api/router/sessions")
+async def router_sessions_list():
+    return await _threaded(router_sessions.list_sessions)
+
+
+@app.get("/api/router/sessions/{session_id}")
+async def router_sessions_get(session_id: str):
+    return await _threaded(router_sessions.get_session, session_id)
+
+
+@app.delete("/api/router/sessions/{session_id}")
+async def router_sessions_delete(session_id: str):
+    return await _threaded(router_sessions.delete_session, session_id)
+
+
+@app.get("/api/router/models")
+async def router_models_list():
+    return await _threaded(providers.get_all_models)
+
+
+@app.get("/api/router/usage")
+async def router_usage():
+    return await _threaded(router_sessions.get_usage)
 
 
 # Built React app (frontend/dist), with SPA fallback
