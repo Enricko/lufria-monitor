@@ -48,8 +48,31 @@ CLAUDE_BIN = "/home/lufria/.local/bin/claude"
 CLAUDE_USER = "lufria"
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB per image
+# Official combos: the main model plus subagents, all on the CLI's own login.
+OFFICIAL_AGENTS = {
+    "explorer": {
+        "description": "Search and read many files quickly; reports findings with file paths and line numbers.",
+        "prompt": "You explore the codebase to answer the question you are given. Read only what is needed, "
+                  "and reply with a short summary that cites file paths and line numbers.",
+        "model": "haiku",
+    },
+    "reviewer": {
+        "description": "Review a finished change for correctness bugs, security risks and regressions.",
+        "prompt": "You review the change you are given. Report only concrete, verified problems with file and "
+                  "line references, most severe first. Do not edit files.",
+        "model": "opus",
+    },
+}
+OFFICIAL_COMBOS = {
+    "official-hemat": {"name": "Official · Hemat", "model": "sonnet", "agents": ["explorer"],
+                       "description": "Sonnet works, Haiku explores"},
+    "official-seimbang": {"name": "Official · Seimbang", "model": "opusplan", "agents": ["explorer", "reviewer"],
+                          "description": "Opus plans, Sonnet executes, Haiku explores, Opus reviews"},
+    "official-kualitas": {"name": "Official · Kualitas", "model": "opus", "agents": ["explorer", "reviewer"],
+                          "description": "Opus works, Haiku explores, Opus reviews"},
+}
 # Model names the CLI resolves with its own login; anything else needs a provider.
-NATIVE_ALIASES = {"default", "claude-default", "best", "opus", "sonnet", "haiku", "fable", "opusplan"}
+NATIVE_ALIASES = {"default", "claude-default", "best", "opus", "sonnet", "haiku", "fable", "opusplan", *OFFICIAL_COMBOS}
 PERMISSION_MODES = ("bypassPermissions", "acceptEdits", "plan")
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 REPLAY_LIMIT = 5000      # events kept to replay a running turn to a page that re-attaches
@@ -147,7 +170,10 @@ async def _prepare(model: str | None, provider_id: str | None, session_id: str |
         cmd += ["--settings", json.dumps(claude_workspace.folder_lock_settings(lock))]
 
     custom_base_url = custom_api_key = provider_name = None
-    if not is_native(model, provider_id):
+    if provider_id is None and model in OFFICIAL_COMBOS:
+        combo = OFFICIAL_COMBOS[model]
+        cmd += ["--model", combo["model"], "--agents", json.dumps({n: OFFICIAL_AGENTS[n] for n in combo["agents"]})]
+    elif not is_native(model, provider_id):
         if not model:
             raise providers.ProviderError("Select a model for the configured provider")
         base_url, api_key, provider_name = await asyncio.to_thread(providers.resolve_model, model, provider_id)
@@ -456,7 +482,10 @@ async def capabilities(refresh: bool = False, cwd: Path | None = None) -> dict:
             cached = (time.time(), await _probe_capabilities(folder))
             _capabilities[str(folder)] = cached
     missing = claude_workspace.sandbox_missing()  # live: installing them shouldn't wait for the cache
-    return {**cached[1], "sandbox": {"available": not missing, "missing": missing}}
+    combos = [{"value": v, "display_name": c["name"], "description": c["description"], "effort_levels": []}
+              for v, c in OFFICIAL_COMBOS.items()]
+    models = [*combos, *cached[1]["models"]]
+    return {**cached[1], "models": models, "sandbox": {"available": not missing, "missing": missing}}
 
 
 async def _control(folder: Path, request: dict, timeout: float = 45) -> dict:

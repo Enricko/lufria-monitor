@@ -115,6 +115,21 @@ class HarnessBase(unittest.IsolatedAsyncioTestCase):
 
 
 class PrepareTest(HarnessBase):
+    async def test_official_combos_map_to_main_model_and_subagents(self):
+        expected = {
+            "official-hemat": ("sonnet", {"explorer": "haiku"}),
+            "official-seimbang": ("opusplan", {"explorer": "haiku", "reviewer": "opus"}),
+            "official-kualitas": ("opus", {"explorer": "haiku", "reviewer": "opus"}),
+        }
+        for combo, (main, agents_expected) in expected.items():
+            with self.subTest(combo=combo):
+                cmd, env, secret, provider = await claude_chat._prepare(combo, None, None, "plan", None)
+                self.assertEqual(cmd[cmd.index("--model") + 1], main)
+                agents = json.loads(cmd[cmd.index("--agents") + 1])
+                self.assertEqual({name: a["model"] for name, a in agents.items()}, agents_expected)
+                self.assertIsNone(secret)
+                self.assertIsNone(provider)
+
     async def test_flags_follow_permission_mode_effort_and_native_aliases(self):
         cmd, env, secret, provider = await claude_chat._prepare("opus", None, SID, "plan", "high")
         self.assertIn("--include-partial-messages", cmd)
