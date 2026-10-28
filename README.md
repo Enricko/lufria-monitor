@@ -15,6 +15,18 @@ is specific to that machine.
 | **Terminal** | **Sign-in: passkey or QR** |
 | ![Terminal](docs/screenshots/desktop-terminal.png) | ![Sign-in](docs/screenshots/login.png) |
 
+### Claude Code
+
+![Claude Code](docs/screenshots/desktop-claude.png)
+
+| Folder and folder lock | Models: official and custom | Usage and cost history |
+|---|---|---|
+| ![Folder picker](docs/screenshots/desktop-claude-folder.png) | ![Model picker](docs/screenshots/desktop-claude-models.png) | ![Usage history](docs/screenshots/desktop-claude-usage.png) |
+
+<img src="docs/screenshots/mobile-claude.png" alt="Claude Code on a phone" width="260">
+
+Screenshots are generated from the real build with fake data by [tools/screenshots.mjs](tools/screenshots.mjs).
+
 ## Features
 
 - **Live dashboard** over WebSocket, refreshed every second, with per-minute history kept for 400 days.
@@ -35,6 +47,7 @@ is specific to that machine.
   - Copy and paste everywhere: Ctrl+C/Ctrl+V (⌘C/⌘V on a Mac), Copy/Paste buttons for phones, a selectable
     scrollback view, and OSC 52 so drag-to-copy works inside apps like Claude Code, tmux and vim.
   - Adjustable text size, and extra keys (Esc, Tab, Ctrl, arrows) for phone keyboards.
+  - Paste or drop a screenshot or file: it is uploaded to the server and its path is typed into the shell.
   - It runs as the dashboard's user, so anyone who can sign in gets that user's shell.
 - **Claude Code:** chat with the real Claude Code CLI on the server. [Details](docs/claude-code.md).
   - Its slash commands, skills and agents, `@` file mentions, `!` bash, `#` memory, plan mode with approval.
@@ -69,6 +82,17 @@ published as world-readable JSON. The web app itself runs as an unprivileged use
 - Backend: Python 3.12+ (FastAPI, psutil, SQLite).
 - Frontend: React 19, Vite, TypeScript, Tailwind CSS 4, Recharts, xterm.js, Lucide icons, Fira Sans and Fira Code (self-hosted).
 
+## Security
+
+This dashboard can start a shell on the machine it runs on. Treat it like SSH access:
+
+- Only expose it over HTTPS (for example through Cloudflare Tunnel) and add a passkey before you rely on it.
+- The terminal and Claude Code run as the dashboard's user. If that user has passwordless `sudo`, anyone who
+  can sign in has root. Remove that `sudo` rule if you don't need it.
+- Don't put it on the open internet without the passkey step. The LAN address works only with the QR sign-in.
+
+Report security problems privately through a GitHub security advisory rather than a public issue.
+
 ## Quick start
 
 On Ubuntu 24.04 or newer:
@@ -85,7 +109,8 @@ sudo deploy/install.sh                       # root helper + dashboard as system
 ```
 
 Then open `http://<server-ip>:8090` and sign in with the bootstrap password. Expose it over HTTPS, set
-`MONITOR_ORIGIN`, and add a passkey in **Settings → Sign-in**: from then on the password is refused.
+`MONITOR_ORIGIN` to your own domain (the default points to the author's), and add a passkey in
+**Settings → Sign-in**: from then on the password is refused.
 The full walkthrough is in [docs/setup.md](docs/setup.md). It covers Cloudflare Tunnel, passkeys, NVIDIA
 laptops, updating, uninstalling and troubleshooting.
 
@@ -109,7 +134,7 @@ laptops, updating, uninstalling and troubleshooting.
 backend/    FastAPI app (app/main.py), sign-in (auth.py), terminal (terminal.py), collectors, energy math
 frontend/   React app (src/pages, src/components, palette.ts = validated chart colors)
 deploy/     systemd units, root helper, installers (bootstrap, install, WattSeal, speedtest, NVIDIA)
-tools/      stress-test.sh + gpu_burn.py, to watch the dashboard under full load
+tools/      stress-test.sh + gpu_burn.py (full-load test), screenshots.mjs (README screenshots, fake data)
 docs/       guides and screenshots
 ```
 
@@ -120,6 +145,12 @@ docs/       guides and screenshots
   disk, network and GPU power formulas and cites them in [docs/power-model.md](docs/power-model.md).
 - [Ookla Speedtest CLI](https://www.speedtest.net/apps/cli) runs the internet speed tests. It is downloaded
   by `deploy/install-speedtest.sh` because Ookla's license does not allow redistributing it.
+
+## Contributing
+
+Issues and pull requests are welcome. Run the backend tests (`cd backend && .venv/bin/python -m unittest discover -s tests`)
+and build the frontend (`cd frontend && npm run build`) before you open a PR. The project layout and conventions
+are in [docs/development.md](docs/development.md).
 
 ## License
 
