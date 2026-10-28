@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ClipboardPaste, Copy, X } from "lucide-react";
+import { ClipboardPaste, Copy, Paperclip, X } from "lucide-react";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { api } from "../api";
 import { Button } from "./ui";
@@ -72,6 +72,51 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
+/** The clipboard's text, or else its image (a screenshot has no text). Throws where the browser won't read it. */
+async function readClipboard(): Promise<string | File> {
+  if (!navigator.clipboard.read) return navigator.clipboard.readText();
+  const items = await navigator.clipboard.read();
+  for (const i of items) if (i.types.includes("text/plain")) return (await i.getType("text/plain")).text();
+  for (const i of items) {
+    const type = i.types.find((t) => t.startsWith("image/"));
+    if (type) return new File([await i.getType(type)], "clipboard image", { type });
+  }
+  return "";
+}
+
+/** Files in a paste or a drop, without folders: the browser can't read those. */
+function droppedFiles(dt: DataTransfer | null) {
+  return Array.from(dt?.items ?? [])
+    .filter((i) => i.kind === "file" && !i.webkitGetAsEntry()?.isDirectory)
+    .map((i) => i.getAsFile())
+    .filter((f): f is File => f !== null);
+}
+
+/** Matches MAX_UPLOAD in backend/app/terminal.py */
+const MAX_UPLOAD = 100 * 1024 * 1024;
+
+/** Sends a file to the server, reporting progress (0 to 1); resolves to the path it was saved at there. */
+function uploadFile(file: File, onProgress: (done: number) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest(); // fetch can't report upload progress
+    xhr.open("POST", `/api/terminal/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      if (xhr.status === 200) return resolve(JSON.parse(xhr.responseText).path);
+      if (xhr.status === 401) window.dispatchEvent(new Event("auth-required"));
+      let detail = `error ${xhr.status}`;
+      try {
+        detail = JSON.parse(xhr.responseText).detail ?? detail;
+      } catch {
+        // not JSON: the tunnel's own error page
+      }
+      reject(new Error(detail));
+    };
+    xhr.onerror = () => reject(new Error("connection lost"));
+    xhr.send(file);
+  });
+}
+
 /** Scrollback plus screen as plain text, with soft-wrapped rows joined back into one line. */
 function bufferText(term: XTerm) {
   const buf = term.buffer.active;
@@ -88,8 +133,8 @@ function bufferText(term: XTerm) {
 
 export type ConnState = "connecting" | "open" | "reconnecting";
 
-/** Copy and paste for the toolbar above the terminal, which phones need: they can't select or paste in xterm. */
-export type TerminalHandle = { copy: () => void; paste: () => void };
+/** Toolbar actions above the terminal, which phones need: they can't select, paste or drop files in xterm. */
+export type TerminalHandle = { copy: () => void; paste: () => void; attach: () => void };
 
 type Panel = { kind: "copy"; text: string } | { kind: "paste" };
 
@@ -118,6 +163,8 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
   const [panelSel, setPanelSel] = useState(""); // text selected in the copy panel
   const preRef = useRef<HTMLPreElement>(null);
   const pasteRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dropping, setDropping] = useState(false);
   const sizeRef = useRef(fontSize);
   sizeRef.current = fontSize;
   const callbacks = useRef({ onTitle, onExit });
@@ -154,6 +201,27 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
         flash(`Press ${APPLE ? "⌘C" : "Ctrl+Shift+C"} or click here to copy`, 8000, copyPending);
       }
     });
+  /** The shell can't reach files on the viewer's computer, so they go to the server first and their path is
+   *  pasted, one paste each: Claude Code turns a pasted path to an image into an attached image. */
+  const attachFiles = async (files: File[]) => {
+    let sent = 0;
+    for (const [i, file] of files.entries()) {
+      const label = files.length > 1 ? `${i + 1}/${files.length} ${file.name}` : file.name;
+      try {
+        if (file.size > MAX_UPLOAD) throw new Error(`files up to ${MAX_UPLOAD >> 20} MB`);
+        flash(`Uploading ${label}…`, 600_000);
+        const path = await uploadFile(file, (done) => flash(`Uploading ${label}… ${Math.round(done * 100)}%`, 600_000));
+        if (sent++) termRef.current?.paste(" ");
+        termRef.current?.paste(path);
+      } catch (e) {
+        flash(`Couldn't upload ${file.name}: ${(e as Error).message}`, 6000);
+        return;
+      }
+    }
+    if (!sent) return;
+    flash(sent > 1 ? `${sent} files uploaded` : "File uploaded");
+    termRef.current?.focus();
+  };
 
   useImperativeHandle(ref, () => ({
     copy() {
@@ -170,11 +238,16 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
       const term = termRef.current;
       if (!term) return;
       try {
-        term.paste(await navigator.clipboard.readText());
+        const got = await readClipboard();
+        if (typeof got === "string") term.paste(got);
+        else attachFiles([got]);
         term.focus();
       } catch {
         setPanel({ kind: "paste" }); // no clipboard read (plain http, or permission refused): paste by hand
       }
+    },
+    attach() {
+      fileRef.current?.click();
     },
   }), []);
 
@@ -290,6 +363,17 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
       return true;
     });
 
+    // A copied screenshot or file has no text, so xterm would paste nothing: upload it instead. Capture runs
+    // before xterm's own paste listeners, which sit on elements inside `el`.
+    const onPaste = (e: ClipboardEvent) => {
+      const files = droppedFiles(e.clipboardData);
+      if (!files.length || e.clipboardData?.getData("text/plain")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      attachFiles(files);
+    };
+    el.addEventListener("paste", onPaste, true);
+
     term.attachCustomKeyEventHandler((e) => {
       const copyKey = e.code === "KeyC" && !e.altKey && (APPLE ? e.metaKey && !e.ctrlKey : e.ctrlKey && e.shiftKey);
       if (e.type === "keydown" && copyKey && !term.hasSelection() && pending.current) {
@@ -327,6 +411,7 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
       ro.disconnect();
       el.removeEventListener("pointerup", markInput, true);
       el.removeEventListener("keydown", markInput, true);
+      el.removeEventListener("paste", onPaste, true);
       ws?.close();
       term.dispose();
       termRef.current = null;
@@ -377,6 +462,33 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
     if (text) termRef.current?.paste(text);
     closePanel();
   };
+  const pasteFiles = (e: React.ClipboardEvent) => {
+    const files = droppedFiles(e.clipboardData);
+    if (!files.length || e.clipboardData.getData("text/plain")) return;
+    e.preventDefault();
+    closePanel();
+    attachFiles(files);
+  };
+
+  // Dropped files: without preventDefault the browser would leave the page to open the file
+  const hasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
+  const onDragOver = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setDropping(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    setDropping(false);
+    const files = droppedFiles(e.dataTransfer);
+    if (files.length) attachFiles(files);
+    else flash("Folders can't be uploaded: drop the files in them, or a zip", 5000);
+  };
 
   const press = (k: (typeof KEYS)[number]) => {
     const term = termRef.current;
@@ -391,12 +503,30 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
   };
 
   const status = conn === "connecting" ? "Connecting…" : conn === "reconnecting" ? "Reconnecting…" : notice?.text;
-  const chip = "absolute top-3 right-4 z-20 rounded-md bg-surface-2 px-2 py-1 text-xs";
+  const chip = "absolute top-3 right-4 z-20 max-w-[80%] truncate rounded-md bg-surface-2 px-2 py-1 text-xs";
 
   return (
     <div className={active ? "flex h-full flex-col" : "hidden"}>
-      <div className="relative min-h-0 flex-1 p-2">
+      <div className="relative min-h-0 flex-1 p-2" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
         <div ref={host} className="h-full" />
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            attachFiles(Array.from(e.target.files ?? []));
+            e.target.value = ""; // picking the same file again still fires
+          }}
+        />
+        {dropping && (
+          <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-xl border-2 border-dashed border-accent bg-bg/80 text-sm text-fg">
+            <p className="flex items-center gap-2">
+              <Paperclip size={16} aria-hidden />
+              Drop files to upload them and paste their path
+            </p>
+          </div>
+        )}
         {status && conn === "open" && notice?.action ? (
           <button type="button" role="status" onClick={notice.action} className={`${chip} cursor-pointer text-fg ring-1 ring-accent`}>
             {status}
@@ -454,8 +584,9 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
                 ref={pasteRef}
                 autoFocus
                 aria-label="Text to paste"
-                placeholder={APPLE ? "Tap and hold, then Paste" : "Ctrl+V, or tap and hold, then Paste"}
+                placeholder={`${APPLE ? "Tap and hold, then Paste" : "Ctrl+V, or tap and hold, then Paste"}. A copied image or file is uploaded straight away`}
                 onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && sendPaste()}
+                onPaste={pasteFiles}
                 style={{ outline: "none" }}
                 className="min-h-0 flex-1 resize-none bg-bg p-3 font-mono text-sm text-fg placeholder:text-muted"
               />

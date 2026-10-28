@@ -16,6 +16,7 @@ run commands on the server without SSH, from a desktop browser or a phone.
 - **Phone keys:** a key bar with Esc, Tab, a sticky Ctrl, arrows, ^C and `| ~ / -`, which phone keyboards lack.
 - **Copy and paste** with the keyboard, the mouse, the toolbar buttons and in apps that grab the mouse, like
   Claude Code, tmux or vim (see below).
+- **Files and images for Claude Code:** drop, paste or pick files and their path on the server is pasted (see below).
 - **Text size:** A↓ / A↑ in the toolbar.
 
 A shell ends when you close its tab, type `exit`, or when `lufria-monitor.service` restarts. The shells run
@@ -61,6 +62,33 @@ Two safety rules apply:
 - Requests to **read** the clipboard (`ESC ] 52 ; c ; ?`) are ignored. Programs on the server never see your clipboard.
 
 To select with the browser instead, hold **Shift** (Windows/Linux) or **Option** (macOS) while dragging.
+
+## Files and images (Claude Code)
+
+The shell runs on the server, so a file on your own computer or phone means nothing to it: dragging a file
+into a terminal normally pastes *your* path (`C:\Users\…\shot.png`), which doesn't exist on the server, and a
+copied screenshot has no text to paste at all. The dashboard uploads the file first and then pastes its
+**server** path instead. Claude Code turns a pasted path to a PNG, JPEG, GIF or WebP file into an attached
+image (`[Image #1]`) and can read any other file at its path (PDF, code, text…); in a plain shell you just
+get the path.
+
+| How | Where |
+|---|---|
+| **Drop** files onto the terminal | Desktop |
+| **Paste** (Ctrl+V / ⌘V) a copied screenshot, image or file | Desktop. If the clipboard also holds text, the text is pasted |
+| **Paste** button | Reads an image from the clipboard where the browser allows it (HTTPS) |
+| **Upload files** button (paperclip) | Phones and desktop: pick one or more files from the gallery or disk |
+
+- Files go to `data/uploads/` as `<date>-<time>-<random>-<name>`, readable by the dashboard user only. The
+  name is kept but cut down to letters, digits, `.`, `_` and `-` (`Laporan (final).pdf` →
+  `Laporan_final_.pdf`), so the path is one word to the shell and to Claude Code. An image gets the extension
+  of its content (`photo.jpeg` that is really a PNG → `photo.png`), which is what Claude Code checks.
+- 100 MB per file at most (Cloudflare's tunnel refuses bigger uploads anyway). The upload streams to disk
+  and the notice shows its progress.
+- Folders can't be uploaded (the browser can't read them): drop the files in them, or a zip.
+- Several files are pasted one at a time with a space between, so each image becomes its own attachment.
+- Uploads older than 7 days are deleted on the next upload. Claude Code keeps its own copy of an attached
+  image in the conversation, so this doesn't break resumed sessions; re-upload other files you still need.
 
 ### Plain-http access
 
@@ -108,6 +136,9 @@ The full wire format and the REST routes are in [api.md](api.md).
 | "Press ⌘C or click here to copy" after selecting | The browser refused a clipboard write outside a click or key press (Safari). Press ⌘C or click the notice |
 | Paste button opens a box instead of pasting | No clipboard permission, or plain-http access. Paste into the box and press Send |
 | Ctrl+C copies instead of stopping a program | Text is selected. Press Ctrl+C again, or click once to clear the selection |
+| "Folders can't be uploaded" after a drop | A folder was dropped. Drop the files in it, or zip it first |
+| "Couldn't upload …: files up to 100 MB" | Too big for the tunnel. Copy it with `scp`/`rsync` over SSH instead |
+| Pasted image path stays plain text in Claude Code | Only PNG, JPEG, GIF and WebP attach (HEIC, BMP, SVG don't: export as PNG/JPEG). The path must be the whole paste, or the file is gone (7-day cleanup) |
 | Every shell vanished | `lufria-monitor.service` restarted (an update, a crash, or `systemctl restart`) |
 | "At most 8 terminals" | Close a tab, or `exit` a shell you don't need |
 | Garbled lines near the top after a reload | Output written at a different terminal width is replayed at the current width. `clear` or Ctrl+L redraws |

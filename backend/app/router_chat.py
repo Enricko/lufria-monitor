@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
+from . import pricing
 from .config import DATA_DIR
 
 log = logging.getLogger(__name__)
@@ -27,96 +28,6 @@ log = logging.getLogger(__name__)
 ROUTER_BASE = "https://9router.lufria.tech/v1"
 SESSIONS_DIR = DATA_DIR / "router_sessions"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# Pricing matrix: estimated price per 1M tokens (input / output) USD
-# Based on public upstream pricing. Estimates only — actual cost via 9Router
-# may differ depending on credits/plan. Used when provider doesn't return usage cost.
-# ---------------------------------------------------------------------------
-_PRICING: dict[str, tuple[float, float]] = {
-    # (input_per_1M, output_per_1M)
-    # Anthropic via Antigravity
-    "ag/claude-opus-5-5":           (15.0,  75.0),
-    "ag/claude-opus-5-5-high":      (15.0,  75.0),
-    "ag/claude-opus-5-5-medium":    (15.0,  75.0),
-    "ag/claude-opus-5-5-low":       (15.0,  75.0),
-    "ag/claude-opus-4-6-thinking":  (15.0,  75.0),
-    "ag/claude-sonnet-5-5":         (3.0,   15.0),
-    "ag/claude-sonnet-5-5-high":    (3.0,   15.0),
-    "ag/claude-sonnet-5-5-medium":  (3.0,   15.0),
-    "ag/claude-sonnet-5-5-low":     (3.0,   15.0),
-    "ag/claude-sonnet-4-6":         (3.0,   15.0),
-    "claude-sonnet-free":           (0.0,    0.0),
-    # Gemini via Antigravity
-    "ag/gemini-3.8-flash":          (0.075,  0.30),
-    "ag/gemini-3.8-flash-high":     (0.075,  0.30),
-    "ag/gemini-3.8-flash-medium":   (0.075,  0.30),
-    "ag/gemini-3.8-flash-low":      (0.075,  0.30),
-    "ag/gemini-3.7-flash-high":     (0.075,  0.30),
-    "ag/gemini-3.7-flash-medium":   (0.075,  0.30),
-    "ag/gemini-3.7-flash-low":      (0.075,  0.30),
-    "ag/gemini-3.6-flash-high":     (0.075,  0.30),
-    "ag/gemini-3.6-flash-medium":   (0.075,  0.30),
-    "ag/gemini-3.6-flash-low":      (0.075,  0.30),
-    "ag/gemini-3.1-pro-high":       (1.25,   5.0),
-    "ag/gemini-3.1-pro-low":        (1.25,   5.0),
-    "ag/gemini-4-argon-high":       (1.25,   5.0),
-    "ag/gemini-pro-agent":          (1.25,   5.0),
-    # GPT via Codex
-    "ag/gpt-oss-120b-medium":       (3.0,   12.0),
-    "cx/gpt-6.1-sol":               (2.50,  10.0),
-    "cx/gpt-6-sol":                 (2.50,  10.0),
-    "cx/gpt-6-sol[1m]":             (2.50,  10.0),
-    "cx/gpt-6-luna":                (2.50,  10.0),
-    "cx/gpt-6-luna[1m]":            (2.50,  10.0),
-    "cx/gpt-6-astra":               (2.50,  10.0),
-    "cx/gpt-6-astra[1m]":           (2.50,  10.0),
-    "cx/gpt-5.6-sol":               (2.50,  10.0),
-    "cx/gpt-5.6-sol[1m]":           (2.50,  10.0),
-    "cx/gpt-5.6-sol-review":        (2.50,  10.0),
-    "cx/gpt-5.6-luna":              (2.50,  10.0),
-    "cx/gpt-5.6-luna[1m]":         (2.50,  10.0),
-    "cx/gpt-5.6-luna-review":       (2.50,  10.0),
-    "cx/gpt-5.6-terra":             (2.50,  10.0),
-    "cx/gpt-5.6-terra[1m]":         (2.50,  10.0),
-    "cx/gpt-5.6-terra-review":      (2.50,  10.0),
-    "cx/gpt-daybreak-blue-latest":  (2.50,  10.0),
-    "cx/gpt-reserve":               (2.50,  10.0),
-    "cx/codex-auto-review":         (2.50,  10.0),
-    # DeepSeek / GLM / MiniMax via CodeBuddy
-    "cbai/deepseek-v4.1-flash":     (0.27,  1.10),
-    "cbai/glm-5.0":                 (0.50,  2.00),
-    "cbai/glm-5.1":                 (0.50,  2.00),
-    "cbai/glm-5.2":                 (0.50,  2.00),
-    "cbai/glm-5.3":                 (0.50,  2.00),
-    "cbai/glm-5.3-flash":           (0.10,  0.40),
-    "cbai/glm-5v-turbo":            (0.50,  2.00),
-    "cbai/minimax-m2.7":            (0.80,  3.50),
-    "cbai/minimax-m3":              (0.80,  3.50),
-    # Grok / union
-    "gcli/grok-4.5-high":           (3.0,   15.0),
-    "grok-high":                    (3.0,   15.0),
-    "oc/union-alpha":               (1.0,    4.0),
-    "oc/jev-1.13-free":             (0.0,    0.0),
-    # Lufria auto
-    "lufria-auto-xhigh":            (3.0,   15.0),
-    "AntiGravity-Tops":             (3.0,   15.0),
-}
-
-def _estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Estimate cost based on model pricing matrix."""
-    # Try exact match first, then prefix match
-    prices = _PRICING.get(model)
-    if not prices:
-        for key, val in _PRICING.items():
-            if model.startswith(key.split("-")[0]):
-                prices = val
-                break
-    if not prices:
-        prices = (1.0, 4.0)  # safe fallback
-    in_price, out_price = prices
-    cost = (input_tokens / 1_000_000 * in_price) + (output_tokens / 1_000_000 * out_price)
-    return round(cost, 6)
 
 
 def _api_key() -> str:
@@ -511,7 +422,7 @@ async def handle_ws(ws: WebSocket):
                     continue
 
                 collected_text, input_tokens, output_tokens = result
-                turn_cost = _estimate_cost_usd(session.get("model", model), input_tokens, output_tokens)
+                turn_cost = pricing.estimate_cost_usd(session.get("model", model), input_tokens, output_tokens)
 
                 # Persist messages
                 session["messages"].append({"role": "user", "content": text})

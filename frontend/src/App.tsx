@@ -16,6 +16,9 @@ import { Claude } from "./pages/Claude";
 // xterm.js is the largest dependency; only load it when the Terminal tab is opened
 const Terminal = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.Terminal })));
 
+/** Page frame; the Terminal page sizes itself to the viewport minus this bottom padding (useFillHeight) */
+const PAGE = "mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8";
+
 function tabFromHash(): Tab {
   const h = location.hash.slice(1);
   return NAV.some((n) => n.id === h) ? (h as Tab) : "overview";
@@ -76,7 +79,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   return (
     <Shell tab={tab} live={live} connected={connected} onLogout={logout} isClaudeRunning={isClaudeRunning}>
       {tab !== "claude" && tab !== "terminal" && (
-        <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8">
+        <div className={PAGE}>
           {tab === "overview" && <Overview live={live} history={history} />}
           {tab === "system" && <System live={live} history={history} />}
           {tab === "power" && <Power live={live} history={history} />}
@@ -94,7 +97,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       )}
       {/* Stays mounted once opened, so its shells and scrollback survive switching tabs */}
       {terminalOpened && (
-        <div hidden={tab !== "terminal"} className="h-full w-full min-h-0">
+        <div hidden={tab !== "terminal"} className={PAGE}>
           <Suspense fallback={null}>
             <Terminal active={tab === "terminal"} />
           </Suspense>

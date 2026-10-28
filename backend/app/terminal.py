@@ -7,6 +7,10 @@ restarting the service ends every session.
 
 Wire format on /ws/terminal/{id}: binary frames carry terminal bytes both ways; text frames are JSON
 control messages (client -> server `resize`, server -> client `attach` and `exit`).
+
+Files dropped or pasted into the page are uploaded here (`open_upload`, `finish_upload`) and the page
+pastes their path: the browser can't hand the shell a file from the viewer's own computer. Claude Code
+attaches a pasted path to a PNG, JPEG, GIF or WebP file as an image and can read any other file.
 """
 import asyncio
 import contextlib
@@ -14,20 +18,28 @@ import fcntl
 import json
 import os
 import pwd
+import re
 import secrets
 import signal
 import struct
 import subprocess
 import termios
 import time
+from pathlib import Path
+from typing import BinaryIO
 
 from fastapi import WebSocket
+
+from .config import UPLOAD_DIR
 
 MAX_SESSIONS = 8
 SCROLLBACK = 512 * 1024        # output bytes kept per session and replayed on (re)attach
 HIGH_WATER = 1024 * 1024       # stop reading the PTY while a client has this much unsent output...
 LOW_WATER = 256 * 1024         # ...and resume once every client is below this
 MAX_PENDING_INPUT = 1024 * 1024
+MAX_UPLOAD = 100 * 1024 * 1024  # Cloudflare's tunnel refuses bigger request bodies anyway
+UPLOAD_TTL = 7 * 86400          # uploads are dropped after this; Claude Code keeps its own copy of images
+IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
 
 sessions: dict[str, "Session"] = {}
 
@@ -227,6 +239,43 @@ def overview() -> dict:
 def close_all() -> None:
     for s in list(sessions.values()):
         s.kill()
+
+
+def image_ext(data: bytes) -> str | None:
+    """File extension for the image types Claude Code accepts, judged by content; None for anything else."""
+    for magic, ext in IMAGE_MAGIC:
+        if data.startswith(magic):
+            return ext
+    return "webp" if data[:4] == b"RIFF" and data[8:12] == b"WEBP" else None
+
+
+def upload_name(name: str, head: bytes) -> str:
+    """The sender's file name cut down to letters, digits, '.', '_' and '-': the pasted path must be one word
+    to the shell, and Claude Code takes a paste as a path only if it is just that. An image Claude Code can
+    attach gets the extension of its content, which is what Claude Code checks first."""
+    name = re.sub(r"[^\w.-]+", "_", re.split(r"[/\\]", name)[-1]).strip("._") or "file"
+    if ext := image_ext(head):
+        name = f"{name.rsplit('.', 1)[0]}.{ext}"
+    return name.encode()[-120:].decode(errors="ignore")  # the end keeps the extension; well under NAME_MAX
+
+
+def open_upload() -> tuple[Path, BinaryIO]:
+    """A private temp file for an upload in progress. Uploads older than UPLOAD_TTL go on the way."""
+    UPLOAD_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    cutoff = time.time() - UPLOAD_TTL
+    for old in UPLOAD_DIR.iterdir():
+        with contextlib.suppress(OSError):
+            if old.is_file() and old.stat().st_mtime < cutoff:
+                old.unlink()
+    tmp = UPLOAD_DIR / f".{secrets.token_hex(8)}.part"
+    return tmp, open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb")
+
+
+def finish_upload(tmp: Path, name: str, head: bytes) -> str:
+    """Give a complete upload its final name (`head` = its first bytes) and return the path to paste."""
+    path = UPLOAD_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}-{upload_name(name, head)}"
+    tmp.rename(path)
+    return str(path)
 
 
 async def serve(ws: WebSocket, s: Session, since: int | None) -> None:

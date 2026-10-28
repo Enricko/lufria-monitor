@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from .config import DATA_DIR
+from .claude_transcript import first_prompt_title, read_thread, usage_summary
 from .providers import atomic_write_json
 
 # ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ from .providers import atomic_write_json
 
 CLAUDE_DIR = Path("/home/lufria/.claude")
 HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
-SESSIONS_DIR = CLAUDE_DIR / "projects" / "-home-lufria"
+SESSIONS_DIR = CLAUDE_DIR / "projects" / "-home-lufria"  # the home folder; other folders sit next to it
 
 BINDINGS_FILE = DATA_DIR / "claude_session_bindings.json"
 _BINDINGS_LOCK = threading.RLock()
@@ -48,14 +49,17 @@ def get_session_binding(session_id: str) -> dict | None:
         binding = _read_bindings().get(session_id)
         if binding is None:
             return None
-        return {field: binding.get(field) for field in ("model", "provider", "provider_id")}
+        return {field: binding.get(field) for field in ("model", "provider", "provider_id", "cwd", "locked")}
 
 
-def set_session_binding(session_id: str, model: str, provider_id: str | None, provider: str | None) -> None:
+def set_session_binding(session_id: str, model: str, provider_id: str | None, provider: str | None,
+                        cwd: str | None = None, locked: bool | None = None) -> None:
     _validate_sid(session_id)
     with _BINDINGS_LOCK:
         bindings = _read_bindings()
-        bindings[session_id] = {"model": model, "provider_id": provider_id, "provider": provider}
+        old = bindings.get(session_id) or {}
+        bindings[session_id] = {"model": model, "provider_id": provider_id, "provider": provider,
+                                "cwd": cwd or old.get("cwd"), "locked": old.get("locked") if locked is None else locked}
         atomic_write_json(BINDINGS_FILE, bindings)
 
 
@@ -99,21 +103,56 @@ def _validate_sid(session_id: str) -> None:
         raise HTTPException(400, "invalid session_id")
 
 
-def _session_file(session_id: str) -> Path:
-    p = SESSIONS_DIR / f"{session_id}.jsonl"
-    # Safety: confirm resolved path stays inside SESSIONS_DIR
+def _project_dirs() -> list[Path]:
+    """One directory per folder Claude Code has worked in; the home folder first."""
     try:
-        resolved = p.resolve()
-        resolved_dir = SESSIONS_DIR.resolve()
-        if resolved_dir not in resolved.parents and resolved != resolved_dir:
-            # The path itself must be a file directly inside, not a subdir escape
-            if resolved.parent != resolved_dir:
-                raise HTTPException(403, "forbidden")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(403, "forbidden")
-    return p
+        others = sorted(d for d in SESSIONS_DIR.parent.iterdir() if d.is_dir() and d != SESSIONS_DIR)
+    except OSError:
+        others = []
+    return [SESSIONS_DIR, *others]
+
+
+def _transcripts():
+    for project in _project_dirs():
+        for path in project.glob("*.jsonl"):
+            if UUID_RE.match(path.stem):
+                yield path
+
+
+def _session_file(session_id: str) -> Path:
+    """The transcript, in whichever folder's project directory it is (session ids are UUIDs, so the
+    name can't leave it). A missing session gets a path in the home folder that doesn't exist."""
+    _validate_sid(session_id)
+    for project in _project_dirs():
+        p = project / f"{session_id}.jsonl"
+        if p.exists():
+            return p
+    return SESSIONS_DIR / f"{session_id}.jsonl"
+
+
+def _transcript_cwd(path: Path) -> str | None:
+    """The folder a session ran in, as the CLI recorded it on its entries."""
+    try:
+        with path.open("rb") as fh:
+            for i, raw in enumerate(fh):
+                if b'"cwd"' in raw:
+                    obj = json.loads(raw)
+                    if isinstance(obj.get("cwd"), str):
+                        return obj["cwd"]
+                if i > 200:
+                    break
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def session_cwd(session_id: str) -> str | None:
+    """Turns of an existing session must run in its folder, or --resume can't find it."""
+    binding = get_session_binding(session_id) or {}
+    if binding.get("cwd"):
+        return binding["cwd"]
+    path = _session_file(session_id)
+    return _transcript_cwd(path) if path.exists() else None
 
 
 # ---------------------------------------------------------------------------
@@ -151,94 +190,96 @@ def _read_history_sessions() -> dict[str, dict]:
     return result
 
 
-def _scan_sessions() -> list[dict]:
-    """Return sessions list from .jsonl files in SESSIONS_DIR."""
-    if not SESSIONS_DIR.exists():
-        return []
+# path -> ((mtime_ns, size), summary): the sidebar is fetched after every turn; most files haven't changed.
+_SCAN_CACHE: dict[Path, tuple[tuple[int, int], dict]] = {}
 
+
+def _summarize(jsonl_path: Path) -> dict:
+    """Message count, titles, latest model and folder of one transcript."""
+    out = {"message_count": 0, "first_user_text": None, "custom_title": None, "ai_title": None,
+           "model": None, "cwd": None}
+    try:
+        with jsonl_path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    t = obj.get("type", "")
+                    if out["cwd"] is None and isinstance(obj.get("cwd"), str):
+                        out["cwd"] = obj["cwd"]
+                    # meta entries (skill bodies, caveats) are not prompts
+                    if t == "user" and not obj.get("isMeta"):
+                        out["message_count"] += 1
+                        if out["first_user_text"] is None:
+                            out["first_user_text"] = first_prompt_title(obj.get("message", {}).get("content", ""))
+                    elif t == "assistant":
+                        out["message_count"] += 1
+                        model = obj.get("message", {}).get("model")
+                        if model and model != "<synthetic>":
+                            out["model"] = model  # latest wins: sessions can switch models
+                    elif t == "ai-title":
+                        out["ai_title"] = str(obj.get("aiTitle", ""))[:60]
+                    elif t == "custom-title":
+                        out["custom_title"] = str(obj.get("customTitle", ""))[:60] or out["custom_title"]
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return out
+
+
+def _scan_sessions() -> list[dict]:
+    """Return sessions list from the transcripts of every folder."""
     history = _read_history_sessions()
     sessions: list[dict] = []
+    seen_paths = set()
 
-    for jsonl_path in SESSIONS_DIR.glob("*.jsonl"):
+    for jsonl_path in _transcripts():
         sid = jsonl_path.stem
-        if not UUID_RE.match(sid):
-            continue
-
         try:
             stat = jsonl_path.stat()
         except Exception:
             continue
+        seen_paths.add(jsonl_path)
+        key = (stat.st_mtime_ns, stat.st_size)
+        cached = _SCAN_CACHE.get(jsonl_path)
+        if cached and cached[0] == key:
+            summary = cached[1]
+        else:
+            summary = _summarize(jsonl_path)
+            _SCAN_CACHE[jsonl_path] = (key, summary)
 
-        size_bytes = stat.st_size
-        updated_at = int(stat.st_mtime)
-
-        # Try to get title from history or ai-title entries in the file
         title = "(no title)"
         created_at = int(stat.st_ctime)
-        project = "/home/lufria"
-        message_count = 0
-        ai_title = None
-
+        project = summary["cwd"] or "/home/lufria"
         hist = history.get(sid)
         if hist:
             title = hist["title"]
             created_at = hist["created_at"] or created_at
-            project = hist["project"]
+            project = summary["cwd"] or hist["project"]
 
-        # Scan file for message count + ai-title
-        first_user_text: str | None = None
-        session_model: str | None = None
-        try:
-            with jsonl_path.open("r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                        t = obj.get("type", "")
-                        if t == "user":
-                            message_count += 1
-                            if first_user_text is None:
-                                msg = obj.get("message", {})
-                                content = msg.get("content", "")
-                                if isinstance(content, str):
-                                    first_user_text = content
-                                elif isinstance(content, list):
-                                    for block in content:
-                                        if isinstance(block, dict) and block.get("type") == "text":
-                                            first_user_text = block.get("text", "")
-                                            break
-                        elif t == "assistant":
-                            message_count += 1
-                            if not session_model:
-                                session_model = obj.get("message", {}).get("model")
-                        elif t == "system" and obj.get("subtype") == "init":
-                            session_model = obj.get("model") or session_model
-                        elif t == "ai-title":
-                            ai_title = str(obj.get("aiTitle", ""))[:60]
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        # Priority: ai-title > history.jsonl display > first user text
-        if ai_title:
-            title = ai_title
-        elif not hist and first_user_text:
-            title = first_user_text[:60]
+        # Priority: /rename > ai-title > first prompt > history.jsonl display
+        title = summary["custom_title"] or summary["ai_title"] or summary["first_user_text"] or title
+        binding = get_session_binding(sid) or {"provider": None, "provider_id": None}
 
         sessions.append({
             "id": sid,
             "title": title,
-            "model": session_model or "Claude Code",
-            **(get_session_binding(sid) or {"provider": None, "provider_id": None}),
+            "model": summary["model"] or "Claude Code",
+            **binding,
+            "cwd": binding.get("cwd") or project,
+            "locked": bool(binding.get("locked")),
             "created_at": created_at,
-            "updated_at": updated_at,
-            "message_count": message_count,
-            "size_bytes": size_bytes,
+            "updated_at": int(stat.st_mtime),
+            "message_count": summary["message_count"],
+            "size_bytes": stat.st_size,
             "project": project,
         })
+
+    for gone in set(_SCAN_CACHE) - seen_paths:
+        _SCAN_CACHE.pop(gone, None)
 
     # Sort newest first, cap at 50
     sessions.sort(key=lambda s: s["updated_at"], reverse=True)
@@ -249,104 +290,40 @@ def _scan_sessions() -> list[dict]:
 # Per-session helpers
 # ---------------------------------------------------------------------------
 
-def _extract_text(content) -> str:
-    """Extract plain text from a content value (str or list of blocks)."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict):
-                btype = block.get("type")
-                if btype == "text":
-                    parts.append(block.get("text", ""))
-                elif btype == "tool_use":
-                    tool_name = block.get("name", "Bash")
-                    inp = block.get("input", {})
-                    cmd = inp.get("command") or inp.get("path") or json.dumps(inp)
-                    parts.append(f"\n\n> ⚙️ **{tool_name}:** `{cmd}`\n\n")
-        return "".join(parts)
-    return ""
-
-
-def _read_session(session_id: str) -> dict:
-    """Read a session .jsonl file and return messages + usage."""
+def _read_session(session_id: str, max_bytes: int | None = None) -> dict:
+    """Read a session .jsonl file and return structured messages + usage."""
     _validate_sid(session_id)
     path = _session_file(session_id)
     if not path.exists():
         raise HTTPException(404, "session not found")
-
-    messages: list[dict] = []
-    usage = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "total_cost_usd": 0.0,
-    }
-    title = session_id[:8]
-    ai_title = None
-    session_model = None
-    history = _read_history_sessions()
-    hist = history.get(session_id)
-    if hist:
-        title = hist["title"]
-
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    t = obj.get("type", "")
-
-                    if t == "ai-title":
-                        ai_title = str(obj.get("aiTitle", ""))[:60]
-
-                    elif t == "user":
-                        msg = obj.get("message", {})
-                        content = msg.get("content", "")
-                        text = _extract_text(content)
-                        if text:
-                            messages.append({"role": "user", "text": text, "ts": _parse_ts(obj.get("timestamp"))})
-
-                    elif t == "assistant":
-                        msg = obj.get("message", {})
-                        session_model = msg.get("model") or session_model
-                        content = msg.get("content", [])
-                        text = _extract_text(content)
-                        ts = _parse_ts(obj.get("timestamp"))
-                        if text:
-                            messages.append({"role": "assistant", "text": text, "ts": ts})
-                        # Accumulate usage from assistant messages
-                        u = msg.get("usage", {})
-                        if u:
-                            usage["input_tokens"] += int(u.get("input_tokens", 0))
-                            usage["output_tokens"] += int(u.get("output_tokens", 0))
-                            usage["cache_read_input_tokens"] += int(u.get("cache_read_input_tokens", 0))
-
-                    elif t == "cost-state":
-                        cost = obj.get("totalCostUSD", 0.0)
-                        if cost:
-                            usage["total_cost_usd"] = float(cost)
-
-                except Exception:
-                    pass
-    except Exception as e:
+        thread = read_thread(path, max_bytes)
+    except OSError as e:
         raise HTTPException(500, str(e))
-
-    if ai_title:
-        title = ai_title
-
+    hist = _read_history_sessions().get(session_id)
+    first = next((first_prompt_title(m["parts"][0].get("text") or "") for m in thread.messages
+                  if m["role"] == "user" and m["parts"] and m["parts"][0]["kind"] == "text"), None)
+    title = thread.custom_title or thread.title or first or (hist or {}).get("title") or session_id[:8]
+    binding = get_session_binding(session_id) or {"provider": None, "provider_id": None}
     return {
         "id": session_id,
         "title": title,
-        "messages": messages,
-        "usage": usage,
-        "model": session_model or "Claude Code",
-        **(get_session_binding(session_id) or {"provider": None, "provider_id": None}),
+        "messages": thread.messages,
+        "usage": thread.usage,
+        "model": thread.model or "Claude Code",
+        **binding,
+        "cwd": binding.get("cwd") or _transcript_cwd(path),
+        "locked": bool(binding.get("locked")),
     }
+
+
+def transcript_size(session_id: str) -> int:
+    """Bytes in a transcript now; a running turn's history is cut here."""
+    _validate_sid(session_id)
+    try:
+        return _session_file(session_id).stat().st_size
+    except OSError:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -357,8 +334,8 @@ def list_sessions() -> list[dict]:
     return _scan_sessions()
 
 
-def get_session(session_id: str) -> dict:
-    return _read_session(session_id)
+def get_session(session_id: str, max_bytes: int | None = None) -> dict:
+    return _read_session(session_id, max_bytes)
 
 
 def delete_session(session_id: str) -> dict:
@@ -376,7 +353,7 @@ def delete_session(session_id: str) -> dict:
 
 def get_usage() -> dict:
     """Aggregate comprehensive usage stats across all sessions (today/week/month/all_time)."""
-    if not SESSIONS_DIR.exists():
+    if not SESSIONS_DIR.parent.exists():
         empty_bucket = lambda: {
             "sessions": 0,
             "input_tokens": 0,
@@ -424,10 +401,8 @@ def get_usage() -> dict:
         "output_tokens": 0,
     })
 
-    for jsonl_path in SESSIONS_DIR.glob("*.jsonl"):
+    for jsonl_path in _transcripts():
         sid = jsonl_path.stem
-        if not UUID_RE.match(sid):
-            continue
 
         try:
             mtime = jsonl_path.stat().st_mtime
@@ -476,14 +451,15 @@ def get_usage() -> dict:
 
             mu = cost_state_obj.get("modelUsage", {})
             if mu:
-                inp = sum(int(m.get("inputTokens", 0)) for m in mu.values())
-                out = sum(int(m.get("outputTokens", 0)) for m in mu.values())
-                cr = sum(int(m.get("cacheReadInputTokens", 0)) for m in mu.values())
-                cc = sum(int(m.get("cacheCreationInputTokens", 0)) for m in mu.values())
-                for mname, mval in mu.items():
-                    models[mname]["cost_usd"] += float(mval.get("costUSD", 0.0))
-                    models[mname]["input_tokens"] += int(mval.get("inputTokens", 0))
-                    models[mname]["output_tokens"] += int(mval.get("outputTokens", 0))
+                # Same prices as the page's usage line: the CLI only guesses for custom models.
+                priced = usage_summary(mu)
+                cost = priced["total_cost_usd"]
+                inp, out = priced["input_tokens"], priced["output_tokens"]
+                cr, cc = priced["cache_read_input_tokens"], priced["cache_creation_input_tokens"]
+                for m in priced["models"]:
+                    models[m["model"]]["cost_usd"] += m["cost_usd"] or 0.0
+                    models[m["model"]]["input_tokens"] += m["input_tokens"]
+                    models[m["model"]]["output_tokens"] += m["output_tokens"]
             else:
                 inp = sum(t["input_tokens"] for t in session_turns)
                 out = sum(t["output_tokens"] for t in session_turns)

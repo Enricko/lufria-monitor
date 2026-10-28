@@ -14,12 +14,18 @@ SID = "12345678-1234-1234-1234-123456789abc"
 
 
 class FakeInput:
+    def __init__(self):
+        self.lines = []
+        self.closed = False
     def write(self, data):
         self.data = data
+        self.lines.append(data)
     async def drain(self):
         pass
     def close(self):
-        pass
+        self.closed = True
+    def is_closing(self):
+        return self.closed
 
 
 class FakeProcess:
@@ -57,7 +63,7 @@ class ClaudeRoutingTest(unittest.IsolatedAsyncioTestCase):
             if json.loads(raw).get("subtype") == "init":
                 self.assertEqual(claude_sessions.get_session_binding(SID)["provider_id"], self.pid)
         with patch("app.claude_chat.asyncio.create_subprocess_exec", new=AsyncMock(return_value=FakeProcess())) as spawn:
-            sid, _ = await claude_chat._run_turn("hello", [], None, "claude-custom", asyncio.get_running_loop().create_future(), send, provider_id=self.pid)
+            sid, _ = await claude_chat._run_turn("hello", [], None, "claude-custom", send, provider_id=self.pid)
         self.assertEqual(sid, SID)
         self.assertIn("claude-custom", spawn.call_args.args)
         self.assertEqual(spawn.call_args.kwargs["env"]["ANTHROPIC_BASE_URL"], "https://selected.test")
@@ -70,7 +76,7 @@ class ClaudeRoutingTest(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_provider_preserves_native_looking_default_raw_model_ids(self):
         for model in ("default", "claude-default"):
             with patch("app.claude_chat.asyncio.create_subprocess_exec", new=AsyncMock(return_value=FakeProcess())) as spawn:
-                await claude_chat._run_turn("hello", [], None, model, asyncio.get_running_loop().create_future(), AsyncMock(), provider_id=self.pid)
+                await claude_chat._run_turn("hello", [], None, model, AsyncMock(), provider_id=self.pid)
             self.assertIn(model, spawn.call_args.args)
             self.assertEqual(claude_sessions.get_session_binding(SID)["model"], model)
             self.assertEqual(claude_sessions.get_session_binding(SID)["provider_id"], self.pid)
@@ -80,13 +86,13 @@ class ClaudeRoutingTest(unittest.IsolatedAsyncioTestCase):
             self.registry.update(self.pid, enabled=False)
             with patch("app.claude_chat.asyncio.create_subprocess_exec", new=AsyncMock()) as spawn:
                 with self.assertRaises(providers.ProviderError):
-                    await claude_chat._run_turn("hello", [], None, "claude-custom", asyncio.get_running_loop().create_future(), AsyncMock(), provider_id=pid)
+                    await claude_chat._run_turn("hello", [], None, "claude-custom", AsyncMock(), provider_id=pid)
                 spawn.assert_not_called()
 
     async def test_no_auth_provider_clears_inherited_anthropic_credentials_but_keeps_route(self):
         pid = self.registry.create(name="No Auth", base_url="http://127.0.0.1:9999/v1")["id"]
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "wrong", "ANTHROPIC_AUTH_TOKEN": "wrong", "ANTHROPIC_BASE_URL": "https://wrong"}), patch("app.claude_chat.asyncio.create_subprocess_exec", new=AsyncMock(return_value=FakeProcess())) as spawn:
-            await claude_chat._run_turn("hello", [], None, "claude-custom", asyncio.get_running_loop().create_future(), AsyncMock(), provider_id=pid)
+            await claude_chat._run_turn("hello", [], None, "claude-custom", AsyncMock(), provider_id=pid)
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:9999")
         self.assertEqual(env.get("ANTHROPIC_API_KEY"), "monitor-no-auth")
@@ -146,7 +152,7 @@ class ClaudeRoutingTest(unittest.IsolatedAsyncioTestCase):
         sent=[]
         async def send(raw):sent.append(raw)
         with patch("app.claude_chat.asyncio.create_subprocess_exec",new=AsyncMock(return_value=proc)):
-            await claude_chat._run_turn("hello",[],None,"custom-model",asyncio.get_running_loop().create_future(),send,provider_id=self.pid)
+            await claude_chat._run_turn("hello",[],None,"custom-model",send,provider_id=self.pid)
         self.assertTrue(sent)
         self.assertNotIn("selected-key","".join(sent))
         self.assertIn("[redacted]","".join(sent))

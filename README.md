@@ -36,11 +36,18 @@ is specific to that machine.
     scrollback view, and OSC 52 so drag-to-copy works inside apps like Claude Code, tmux and vim.
   - Adjustable text size, and extra keys (Esc, Tab, Ctrl, arrows) for phone keyboards.
   - It runs as the dashboard's user, so anyone who can sign in gets that user's shell.
+- **Claude Code:** chat with the real Claude Code CLI on the server. [Details](docs/claude-code.md).
+  - Its slash commands, skills and agents, `@` file mentions, `!` bash, `#` memory, plan mode with approval.
+  - Official Claude or any custom provider, switchable mid-session; turns keep running when you leave the page.
+  - Tokens (input, output, cache read and write) and cost under the message box.
+  - The official Claude plan's 5-hour and weekly limits, live, before you send anything and whatever model you use.
+  - Pick the folder it works in, and lock it so Claude can only change files there (sandboxed Bash).
 - **Login:** passkeys only (Touch ID, Face ID, or any phone/security key), or a QR code on the login screen that
   you approve with a passkey on your phone. A password (PBKDF2) only bootstraps the first passkey and is refused
   after that. Signed session cookie, brute-force lockout and a one-time recovery link from the server's CLI.
   [Details](docs/authentication.md).
-- **Responsive:** dark UI with phone and desktop layouts.
+- **Responsive:** dark UI with phone and desktop layouts; on desktop the sidebar can be dragged wider or
+  narrower, or folded to icons.
 
 ## How it fits together
 
@@ -89,6 +96,7 @@ laptops, updating, uninstalling and troubleshooting.
 | [docs/setup.md](docs/setup.md) | Install, expose through Cloudflare Tunnel, add a passkey, update, uninstall, troubleshooting |
 | [docs/configuration.md](docs/configuration.md) | Settings, environment variables, files, services, backups |
 | [docs/authentication.md](docs/authentication.md) | Passkeys, QR sign-in, recovery, sessions, lockout, hardening |
+| [docs/claude-code.md](docs/claude-code.md) | The Claude Code page: models and providers, commands, shortcuts, permission modes |
 | [docs/terminal.md](docs/terminal.md) | The browser terminal: sessions, copy and paste, OSC 52, text size, security |
 | [docs/power-model.md](docs/power-model.md) | How watts, kWh, Rupiah and per-app energy are computed |
 | [docs/nvidia-gpu.md](docs/nvidia-gpu.md) | NVIDIA laptop GPUs: making them sleep at 0 W, and not waking them |

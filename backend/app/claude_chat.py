@@ -1,18 +1,28 @@
 """Claude Code chat: WebSocket bridge to the claude CLI using stream-json I/O.
 
-Wire format on /ws/claude:
-  client → server: JSON {"type":"user","text":"...","images":[{"mime":"image/png","data":"<b64>"}]}
-                or {"type":"interrupt"} to cancel the current turn
-                or {"type":"resume","session_id":"..."} to resume a named session (e.g. after page refresh)
-  server → client: raw JSON lines from claude --output-format=stream-json --verbose
-                   plus {"type":"status","state":"thinking"|"idle"|"error","msg":"..."}
-                   and  {"type":"session","session_id":"..."} emitted once the session_id is known
+Every turn spawns `claude --print` (with --resume <session_id> after the first), so each turn
+can pick its own model *and* provider: official Claude through the CLI's own login, or any
+Anthropic-compatible router from Settings (ANTHROPIC_BASE_URL). One session can move back and
+forth between them; Claude Code drops thinking blocks written by another model itself.
 
-Design:
-  - Each turn spawns claude --print (exits after one turn) with --resume <session_id> on turn 2+.
-  - session_id is captured from the system/init line of the FIRST turn and returned to the client.
-  - The client echoes it back on reconnect via {"type":"resume","session_id":"..."} so the
-    conversation survives page refreshes and tab switches.
+Wire format on /ws/claude:
+  client → server:
+    {"type":"resume","session_id":"<uuid>"|""}   show a session ("" = new chat). Answered with
+        {"type":"history",...} (the transcript), the events of a turn still running, then
+        {"type":"attached","session_id","running"}
+    {"type":"user","text","images":[{"mime","data"}],"model","provider_id","permission_mode",
+        "effort","client_id"}                     one turn; text may be a slash command, which
+                                                  the CLI runs (skills, /compact, /context, ...)
+    {"type":"interrupt"}                          stop the running turn or bash command
+    {"type":"bash","command","client_id"}          `!` bash mode -> {"type":"bash_result",...}
+  server → client:
+    raw JSON lines from the CLI (system/init, assistant, user, stream_event, result),
+    {"type":"turn_start"|"tool_start"|"tool_done"|"turn_usage"|"plan_limits",...},
+    {"type":"session","session_id"} once a new session has its id,
+    {"type":"status","state":"thinking"|"idle"|"error","msg"}
+
+Turns belong to the server, not the socket (RUNS): refreshing the page or opening another
+session leaves a turn running, and resuming its session replays what it has done so far.
 """
 import asyncio
 import base64
@@ -21,10 +31,16 @@ import logging
 import os
 import pwd
 import signal
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
 
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 
-from app import providers, claude_sessions
+from app import claude_sessions, claude_workspace, providers
+from app.claude_transcript import tool_part, tool_result_text, usage_summary
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +48,15 @@ CLAUDE_BIN = "/home/lufria/.local/bin/claude"
 CLAUDE_USER = "lufria"
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB per image
+# Model names the CLI resolves with its own login; anything else needs a provider.
+NATIVE_ALIASES = {"default", "claude-default", "best", "opus", "sonnet", "haiku", "fable", "opusplan"}
+PERMISSION_MODES = ("bypassPermissions", "acceptEdits", "plan")
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+REPLAY_LIMIT = 5000      # events kept to replay a running turn to a page that re-attaches
+OUTBOX_LIMIT = 20000     # queued frames per socket before streaming deltas are dropped
+CAPABILITIES_TTL = 600
+LIMITS_TTL = 30          # seconds a plan-limits answer is shared by every page
+LIMITS_MIN_INTERVAL = 10  # even a refresh waits this long between probes
 
 
 def _user() -> pwd.struct_passwd:
@@ -85,75 +110,128 @@ def _build_user_message(text: str, images: list[dict]) -> dict:
     return {"type": "user", "message": {"role": "user", "content": content}}
 
 
-async def _run_turn(
-    text: str,
-    images: list[dict],
-    session_id: str | None,
-    model: str | None,
-    on_line: "asyncio.Future[None]",
-    send,
-    provider_id: str | None = None,
-) -> tuple[str | None, asyncio.subprocess.Process]:
-    """Spawn one claude --print turn. Returns (session_id, proc).
-    Calls send(json_str) for each output line. on_line future resolves after first line."""
-    u = _user()
+class TurnError(Exception):
+    """A turn that can't start, with a message for the user."""
+
+
+def is_native(model: str | None, provider_id: str | None) -> bool:
+    """Official Claude through the CLI's own login (no provider, a Claude model or alias)."""
+    return provider_id is None and (not model or model in NATIVE_ALIASES or model.startswith("claude-"))
+
+
+async def _prepare(model: str | None, provider_id: str | None, session_id: str | None,
+                   permission_mode: str, effort: str | None,
+                   lock: Path | None = None) -> tuple[list[str], dict, str | None, str | None]:
+    """CLI argv + env for one turn: (cmd, env, api key to redact, provider name).
+    `lock`: keep the turn's writes inside this folder (sandboxed Bash + an edit guard)."""
     cmd = [
         CLAUDE_BIN,
         "--print",
         "--input-format=stream-json",
         "--output-format=stream-json",
         "--verbose",
-        "--dangerously-skip-permissions",
+        "--include-partial-messages",
+        # Nobody answers permission prompts over this pipe: whatever would ask is denied.
+        "--permission-prompts", "none",
     ]
+    if permission_mode == "bypassPermissions":
+        cmd.append("--dangerously-skip-permissions")
+    else:
+        cmd += ["--permission-mode", permission_mode]
+    if effort:
+        cmd += ["--effort", effort]
+    if lock is not None:
+        missing = claude_workspace.sandbox_missing()
+        if missing:
+            raise TurnError(f"The folder lock needs {' and '.join(missing)}. Install with: sudo apt install bubblewrap socat")
+        cmd += ["--settings", json.dumps(claude_workspace.folder_lock_settings(lock))]
 
-    custom_base_url: str | None = None
-    custom_api_key: str | None = None
-
-    provider_name = None
-    if provider_id is not None or (model and model not in ("default", "claude-default") and not model.startswith("claude-")):
+    custom_base_url = custom_api_key = provider_name = None
+    if not is_native(model, provider_id):
         if not model:
             raise providers.ProviderError("Select a model for the configured provider")
         base_url, api_key, provider_name = await asyncio.to_thread(providers.resolve_model, model, provider_id)
         custom_base_url = base_url.rstrip("/").removesuffix("/v1").rstrip("/")
         custom_api_key = api_key
         cmd += ["--model", model]
-    elif model and model.startswith("claude-") and model != "claude-default":
+    elif model and model not in ("default", "claude-default"):
         cmd += ["--model", model]
 
     if session_id:
         cmd += ["--resume", session_id]
+    return cmd, _claude_env(custom_base_url, custom_api_key), custom_api_key or None, provider_name
 
-    env = _claude_env(custom_base_url, custom_api_key)
 
-    async def safe_send(raw):
-        if custom_api_key:
-            raw = raw.replace(custom_api_key, "[redacted]")
-            raw = raw.replace(json.dumps(custom_api_key)[1:-1], "[redacted]")
-        await send(raw)
+def _redactor(secret: str | None) -> Callable[[str], str]:
+    if not secret:
+        return lambda raw: raw
+    escaped = json.dumps(secret)[1:-1]
+    return lambda raw: raw.replace(secret, "[redacted]").replace(escaped, "[redacted]")
+
+
+async def _run_turn(
+    text: str,
+    images: list[dict],
+    session_id: str | None,
+    model: str | None,
+    send: Callable[[str], object],
+    provider_id: str | None = None,
+    permission_mode: str = "bypassPermissions",
+    effort: str | None = None,
+    on_start: Callable[[asyncio.subprocess.Process, str | None], object] | None = None,
+    on_session: Callable[[str], object] | None = None,
+    cwd: Path | None = None,
+    locked: bool = False,
+) -> tuple[str | None, asyncio.subprocess.Process]:
+    """Spawn one claude --print turn in `cwd` and forward its output. Returns (session_id, proc).
+
+    stdin stays open until the CLI reports its result, so an interrupt can be sent as a
+    control request (the CLI then records the interruption in the transcript)."""
+    u = _user()
+    folder = cwd or Path(u.pw_dir)
+    cmd, env, secret, provider_name = await _prepare(model, provider_id, session_id, permission_mode, effort,
+                                                     lock=folder if locked else None)
+    redact = _redactor(secret)
+
+    async def safe_send(raw: str):
+        result = send(redact(raw))
+        if asyncio.iscoroutine(result):
+            await result
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
         env=env,
-        cwd=u.pw_dir,
+        cwd=folder,
         limit=64 * 1024 * 1024,
         preexec_fn=lambda: (os.setgid(u.pw_gid), os.setuid(u.pw_uid)),
     )
+    if on_start:
+        on_start(proc, provider_name)
 
-    # Write the message then close stdin (signals end-of-input to claude)
+    stderr_tail = bytearray()
+
+    async def drain_stderr():
+        stream = getattr(proc, "stderr", None)
+        if stream is None:
+            return
+        while chunk := await stream.read(4096):
+            stderr_tail.extend(chunk)
+            del stderr_tail[:-4096]
+
+    stderr_task = asyncio.ensure_future(drain_stderr())
+
     msg_bytes = (json.dumps(_build_user_message(text, images), ensure_ascii=False) + "\n").encode()
     assert proc.stdin
     proc.stdin.write(msg_bytes)
     await proc.stdin.drain()
-    proc.stdin.close()
 
     captured_sid: str | None = session_id
     captured_model: str = ""
-    first = True
-    rate_limit_msg: dict | None = None
-    active_tools: dict[str, tuple[str, str]] = {}
+    saw_result = False
+    tools: dict[str, dict] = {}
 
     while True:
         try:
@@ -171,150 +249,479 @@ async def _run_turn(
         if not raw.strip():
             continue
 
-        if first:
-            first = False
-            if not on_line.done():
-                on_line.set_result(None)
-
         try:
             obj = json.loads(raw)
-            obj_type = obj.get("type")
-
-            if obj_type == "system" and obj.get("subtype") == "init":
-                captured_sid = obj.get("session_id", captured_sid)
-                captured_model = str(obj.get("model", ""))
-                if captured_sid:
-                    await asyncio.to_thread(claude_sessions.set_session_binding, captured_sid,
-                                            model if model is not None and (provider_id is not None or model not in ("default", "claude-default")) else captured_model or "claude-default",
-                                            provider_id, provider_name)
-
-            elif obj_type == "rate_limit_event":
-                # Extract unified rate limit windows
-                info = obj.get("rate_limit_info", {})
-                windows = info.get("unifiedWindows", {})
-                five_hour = windows.get("five_hour", {})
-                seven_day = windows.get("seven_day", {})
-                rate_limit_msg = {
-                    "type": "rate_limit",
-                    "five_hour": {
-                        "utilization": five_hour.get("utilization", 0),
-                        "resets_at": five_hour.get("resetsAt", 0),
-                    },
-                    "seven_day": {
-                        "utilization": seven_day.get("utilization", 0),
-                        "resets_at": seven_day.get("resetsAt", 0),
-                    },
-                }
-
-            elif obj_type == "assistant":
-                # Check for tool_use blocks inside assistant message
-                content = obj.get("message", {}).get("content", [])
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "tool_use":
-                            tool_id = block.get("id", "")
-                            tool_name = block.get("name", "Tool")
-                            inp = block.get("input", {})
-                            cmd_str = inp.get("command") or inp.get("path") or json.dumps(inp)
-                            if tool_id:
-                                active_tools[tool_id] = (tool_name, str(cmd_str))
-                            await safe_send(json.dumps({
-                                "type": "tool_start",
-                                "id": tool_id,
-                                "tool": tool_name,
-                                "command": str(cmd_str),
-                            }))
-
-            elif obj_type == "user":
-                # Check for tool_result blocks (from Claude Code tool completion)
-                content = obj.get("message", {}).get("content", [])
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "tool_result":
-                            tool_id = block.get("tool_use_id", "")
-                            meta = active_tools.pop(tool_id, ("Bash", ""))
-                            tool_name, cmd_str = meta
-                            res_content = block.get("content", "")
-                            if isinstance(res_content, list):
-                                res_content = "\n".join(str(x) for x in res_content)
-                            await safe_send(json.dumps({
-                                "type": "tool_done",
-                                "id": tool_id,
-                                "tool": tool_name,
-                                "command": cmd_str,
-                                "output": str(res_content)[:4000],
-                            }))
-
-            elif obj_type == "result":
-                # Extract per-turn usage from the result line
-                usage = obj.get("usage", {})
-                turn_usage_msg = {
-                    "type": "turn_usage",
-                    "input_tokens": usage.get("input_tokens", 0),
-                    "output_tokens": usage.get("output_tokens", 0),
-                    "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
-                    "total_cost_usd": obj.get("total_cost_usd", 0.0),
-                    "model": captured_model,
-                }
-                # Model may be in the init line's model field; also check result's modelUsage
-                await safe_send(json.dumps(turn_usage_msg))
-
         except json.JSONDecodeError:
-            pass
+            await safe_send(raw)
+            continue
+        obj_type = obj.get("type")
+        # Subagent traffic is folded into its Task card, not shown as the main thread.
+        main_thread = not obj.get("parent_tool_use_id")
+
+        if obj_type == "system" and obj.get("subtype") == "init":
+            captured_sid = obj.get("session_id", captured_sid)
+            captured_model = str(obj.get("model", ""))
+            if captured_sid:
+                await asyncio.to_thread(claude_sessions.set_session_binding, captured_sid,
+                                        model if model is not None and (provider_id is not None or model not in ("default", "claude-default")) else captured_model or "claude-default",
+                                        provider_id, provider_name, str(folder), locked)
+                if on_session:
+                    on_session(captured_sid)
+
+        elif obj_type == "rate_limit_event":
+            # The official account's limits, straight from this turn's response headers.
+            update = note_rate_limit(obj.get("rate_limit_info") or {}) if is_native(model, provider_id) else None
+            if update:
+                await safe_send(json.dumps({"type": "plan_limits", **update}))
+
+        elif obj_type == "assistant" and main_thread:
+            content = obj.get("message", {}).get("content", [])
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    part = tool_part(block)
+                    tools[part["id"]] = part
+                    await safe_send(json.dumps({"type": "tool_start", "part": part,
+                                                # kept for older pages
+                                                "id": part["id"], "tool": part["name"], "command": part["summary"]}))
+
+        elif obj_type == "user" and main_thread:
+            content = obj.get("message", {}).get("content", [])
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tool_id = str(block.get("tool_use_id", ""))
+                    part = tools.pop(tool_id, None) or {"name": "Tool", "summary": ""}
+                    await safe_send(json.dumps({
+                        "type": "tool_done", "id": tool_id, "tool": part["name"], "command": part["summary"],
+                        "output": tool_result_text(block.get("content", "")), "is_error": bool(block.get("is_error")),
+                    }))
+
+        elif obj_type == "result":
+            saw_result = True
+            # Per model, subagents and the CLI's side calls included; custom models get our price.
+            per_model = obj.get("model_usage_since_last_result") or obj.get("modelUsage") or {}
+            if not per_model and obj.get("usage"):
+                per_model = {captured_model or "unknown": {**obj["usage"], "costUSD": obj.get("total_cost_usd")}}
+            await safe_send(json.dumps({"type": "turn_usage", **usage_summary(per_model), "model": captured_model}))
+            # End of turn: closing stdin lets the CLI exit.
+            if proc.stdin and not proc.stdin.is_closing():
+                proc.stdin.close()
 
         await safe_send(raw)
 
-    # Emit rate limit info after the turn (if we saw one)
-    if rate_limit_msg:
-        await safe_send(json.dumps(rate_limit_msg))
+    if proc.stdin and not proc.stdin.is_closing():
+        proc.stdin.close()
+    try:
+        await asyncio.wait_for(asyncio.shield(stderr_task), timeout=2)
+    except (asyncio.TimeoutError, Exception):
+        stderr_task.cancel()
+    if not saw_result:
+        await proc.wait()
+        if proc.returncode and proc.returncode > 0:  # negative = a signal, i.e. our interrupt
+            detail = stderr_tail.decode("utf-8", errors="replace").strip().splitlines()[-3:]
+            await safe_send(json.dumps({"type": "assistant", "is_api_error_message": True,
+                                        "error": "Claude Code exited before finishing the turn"
+                                                 + (f": {' '.join(detail)[:400]}" if detail else ".")}))
 
     return captured_sid, proc
 
 
-# Background running sessions tracker
-ACTIVE_SESSIONS: set[str] = set()
+# ---------------------------------------------------------------------------
+# Runs: turns outlive the socket that started them
+# ---------------------------------------------------------------------------
+
+class Run:
+    """One turn in flight. Sockets subscribe to it; its events are kept for re-attach."""
+
+    def __init__(self, session_id: str | None):
+        self.key = session_id or f"new:{uuid.uuid4()}"
+        self.session_id = session_id
+        self.proc: asyncio.subprocess.Process | None = None
+        self.task: asyncio.Task | None = None
+        self.events: list[str] = []
+        self.subscribers: dict[int, Callable[[str], None]] = {}
+        self.history_bytes: int | None = None
+        self.done = False
+
+    def emit(self, raw: str) -> None:
+        # Live deltas are not replayed: the full assistant message follows each of them.
+        if '"stream_event"' not in raw[:60] and len(self.events) < REPLAY_LIMIT:
+            self.events.append(raw)
+        for send in list(self.subscribers.values()):
+            send(raw)
+
+    def set_session(self, session_id: str) -> None:
+        if self.session_id == session_id:
+            return
+        RUNS.pop(self.key, None)
+        self.key = self.session_id = session_id
+        RUNS[session_id] = self
+        self.emit(json.dumps({"type": "session", "session_id": session_id}))
+
+    async def execute(self, text: str, images: list[dict], model: str | None, provider_id: str | None,
+                      permission_mode: str, effort: str | None, client_id: str | None,
+                      cwd: Path | None = None, locked: bool = False) -> None:
+        def started(proc, provider_name):
+            self.proc = proc
+            self.emit(json.dumps({"type": "turn_start", "client_id": client_id, "text": text,
+                                  "images": len(images), "model": model or "default",
+                                  "provider": provider_name, "provider_id": provider_id,
+                                  "permission_mode": permission_mode, "effort": effort,
+                                  "cwd": str(cwd) if cwd else None, "locked": locked}))
+
+        self.emit(json.dumps({"type": "status", "state": "thinking", "msg": ""}))
+        try:
+            if self.session_id:
+                self.history_bytes = await asyncio.to_thread(claude_sessions.transcript_size, self.session_id)
+            sid, _ = await _run_turn(text, images, self.session_id, model, self.emit, provider_id=provider_id,
+                                     permission_mode=permission_mode, effort=effort, on_start=started,
+                                     on_session=self.set_session, cwd=cwd, locked=locked)
+            if sid:
+                self.set_session(sid)
+        except asyncio.CancelledError:
+            log.info("Turn cancelled")
+        except Exception as e:
+            log.error("Claude turn failed (%s)", type(e).__name__)
+            self.emit(json.dumps({
+                "type": "assistant",
+                "error": str(e) if isinstance(e, (providers.ProviderError, TurnError)) else "Unable to run Claude Code. Check provider settings and try again.",
+                "is_api_error_message": True,
+            }))
+        finally:
+            await self._reap()
+            self.done = True
+            RUNS.pop(self.key, None)
+            self.emit(json.dumps({"type": "status", "state": "idle", "msg": ""}))
+
+    async def interrupt(self) -> None:
+        """Ask the CLI to stop (it records the interruption), then escalate to signals."""
+        proc = self.proc
+        if proc is None:
+            if self.task and not self.task.done():
+                self.task.cancel()
+            return
+        if proc.returncode is None and proc.stdin and not proc.stdin.is_closing():
+            request = {"type": "control_request", "request_id": f"interrupt-{uuid.uuid4().hex[:8]}",
+                       "request": {"subtype": "interrupt"}}
+            try:
+                proc.stdin.write((json.dumps(request) + "\n").encode())
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                pass
+        for sig, wait in ((None, 5), (signal.SIGINT, 3), (signal.SIGKILL, 3)):
+            if proc.returncode is not None:
+                break
+            if sig is not None:
+                try:
+                    proc.send_signal(sig)
+                except ProcessLookupError:
+                    break
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=wait)
+            except asyncio.TimeoutError:
+                continue
+
+    async def _reap(self) -> None:
+        proc = self.proc
+        if proc is None or proc.returncode is not None:
+            return
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+
+
+RUNS: dict[str, Run] = {}
+
+
+def running_ids() -> set[str]:
+    return {run.session_id for run in RUNS.values() if run.session_id and not run.done}
+
+
+# ---------------------------------------------------------------------------
+# Capabilities: the CLI's own command list, agents and models (no API call)
+# ---------------------------------------------------------------------------
+
+_capabilities: dict[str, tuple[float, dict]] = {}  # per folder: its skills and commands differ
+_capabilities_lock = asyncio.Lock()
+
+
+async def capabilities(refresh: bool = False, cwd: Path | None = None) -> dict:
+    folder = cwd or claude_workspace.cwd()
+    async with _capabilities_lock:
+        cached = _capabilities.get(str(folder))
+        if refresh or not cached or time.time() - cached[0] >= CAPABILITIES_TTL:
+            cached = (time.time(), await _probe_capabilities(folder))
+            _capabilities[str(folder)] = cached
+    missing = claude_workspace.sandbox_missing()  # live: installing them shouldn't wait for the cache
+    return {**cached[1], "sandbox": {"available": not missing, "missing": missing}}
+
+
+async def _control(folder: Path, request: dict, timeout: float = 45) -> dict:
+    """Send one SDK control request to a throwaway CLI on the official login and return its answer."""
+    u = _user()
+    proc = await asyncio.create_subprocess_exec(
+        CLAUDE_BIN, "--print", "--input-format=stream-json", "--output-format=stream-json", "--verbose",
+        "--no-session-persistence", "--permission-prompts", "none",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        env=_claude_env(), cwd=folder, limit=16 * 1024 * 1024,
+        preexec_fn=lambda: (os.setgid(u.pw_gid), os.setuid(u.pw_uid)),
+    )
+    subtype = request["subtype"]
+    request_id = f"{subtype}-{uuid.uuid4().hex[:8]}"
+    try:
+        assert proc.stdin and proc.stdout
+        proc.stdin.write((json.dumps({"type": "control_request", "request_id": request_id,
+                                      "request": request}) + "\n").encode())
+        await proc.stdin.drain()
+
+        async def answer() -> dict:
+            while line := await proc.stdout.readline():  # type: ignore[union-attr]
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                response = obj.get("response") if obj.get("type") == "control_response" else None
+                if isinstance(response, dict) and response.get("request_id") == request_id:
+                    if response.get("subtype") != "success":
+                        raise RuntimeError(str(response.get("error") or f"{subtype} failed"))
+                    return response.get("response") or {}
+            raise RuntimeError("Claude Code exited before answering")
+
+        return await asyncio.wait_for(answer(), timeout=timeout)
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+
+
+async def _probe_capabilities(folder: Path) -> dict:
+    """The SDK `initialize` answer: commands, agents, models and account."""
+    data = await _control(folder, {"subtype": "initialize"})
+
+    def text(value, limit):
+        return " ".join(str(value or "").split())[:limit]
+
+    commands = []
+    for c in data.get("commands") or []:
+        name = str(c.get("name", ""))
+        if not name or name.startswith("__"):
+            continue
+        commands.append({"name": name, "description": text(c.get("description"), 400),
+                         "argument_hint": text(c.get("argumentHint"), 120),
+                         "aliases": [str(a) for a in c.get("aliases") or []],
+                         "builtin": bool(c.get("builtin"))})
+    account = data.get("account") or {}
+    return {
+        "version": data.get("claude_code_version"),
+        "commands": commands,
+        "agents": [{"name": str(a.get("name", "")), "description": text(a.get("description"), 300)}
+                   for a in data.get("agents") or [] if a.get("name")],
+        "models": [{"value": str(m.get("value", "")), "display_name": text(m.get("displayName"), 80),
+                    "description": text(m.get("description"), 160),
+                    "effort_levels": [str(e) for e in m.get("supportedEffortLevels") or []]}
+                   for m in data.get("models") or [] if m.get("value")],
+        "output_style": data.get("output_style"),
+        "output_styles": [str(s) for s in data.get("available_output_styles") or []],
+        "account": {"subscription": account.get("subscriptionType"), "provider": account.get("apiProvider")},
+        "cwd": str(folder),
+        "home": str(claude_workspace.home()),
+        "memory": {scope: str(path) for scope, path in claude_workspace.memory_files(folder).items()},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plan limits: the official login's 5-hour and weekly windows (no model call)
+# ---------------------------------------------------------------------------
+
+_SEVERITY = {"allowed": "normal", "allowed_warning": "warning", "rejected": "critical"}
+# `limits` rows the page names itself; other kinds are labelled from their group and scope.
+_LIMIT_KINDS = {"session": ("five_hour", "5-hour"), "weekly_all": ("seven_day", "Weekly")}
+# What a CLI without `limits` rows reports, and what a turn's rate_limit_event carries (first two).
+_NAMED_WINDOWS = (("five_hour", "5-hour"), ("seven_day", "Weekly"),
+                  ("seven_day_opus", "Weekly · Opus"), ("seven_day_sonnet", "Weekly · Sonnet"))
+
+_limits: dict = {"data": None, "at": 0.0, "stale": False, "error": None}
+_limits_lock = asyncio.Lock()
+
+
+def _epoch(value) -> int | None:
+    """Unix seconds from an ISO timestamp (get_usage) or seconds already (rate_limit_event)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value:
+        try:
+            return int(datetime.fromisoformat(value).timestamp())
+        except ValueError:
+            return None
+    return None
+
+
+def _window(key: str, label: str, percent, resets_at, severity=None, active=False) -> dict:
+    try:
+        pct = max(0.0, float(percent))  # can pass 100: low-priority work may run past a cap
+    except (TypeError, ValueError):
+        pct = 0.0
+    return {"key": key[:120], "label": label[:80], "percent": round(pct, 1), "resets_at": _epoch(resets_at),
+            "severity": str(severity or "normal")[:32], "active": bool(active)}
+
+
+def _windows(limits: dict) -> list[dict]:
+    rows = []
+    for row in limits.get("limits") or []:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind") or "")
+        scope = row.get("scope") if isinstance(row.get("scope"), dict) else {}
+        name = next((str(s["display_name"]) for s in (scope.get("model"), scope.get("surface"))
+                     if isinstance(s, dict) and s.get("display_name")), None)
+        if kind in _LIMIT_KINDS and not name:
+            key, label = _LIMIT_KINDS[kind]
+        else:
+            group = str(row.get("group") or kind).replace("_", " ").strip().capitalize() or "Limit"
+            key, label = f"{kind}:{name or len(rows)}", f"{group} · {name}" if name else group
+        rows.append(_window(key, label, row.get("percent"), row.get("resets_at"), row.get("severity"),
+                            row.get("is_active")))
+    if rows:
+        return rows
+    for key, label in _NAMED_WINDOWS:
+        w = limits.get(key)
+        if isinstance(w, dict) and w.get("utilization") is not None:
+            rows.append(_window(key, label, w["utilization"], w.get("resets_at")))
+    for m in limits.get("model_scoped") or []:
+        if isinstance(m, dict) and m.get("utilization") is not None and m.get("display_name"):
+            name = str(m["display_name"])
+            rows.append(_window(f"model:{name}", f"Weekly · {name}", m["utilization"], m.get("resets_at")))
+    return rows
+
+
+def _plan_limits(usage: dict) -> dict:
+    """The part of a `get_usage` answer the page shows."""
+    limits = usage.get("rate_limits") if isinstance(usage.get("rate_limits"), dict) else None
+    return {"available": bool(usage.get("rate_limits_available")), "subscription": usage.get("subscription_type"),
+            "windows": _windows(limits) if limits else [], "fetched_at": time.time(), "source": "usage"}
+
+
+async def plan_limits(refresh: bool = False) -> dict:
+    """The official login's plan limits, whatever model a chat uses. One probe serves every page
+    for LIMITS_TTL seconds; a refresh, or a turn that moved the numbers, asks again sooner."""
+    async with _limits_lock:
+        due = LIMITS_MIN_INTERVAL if refresh or _limits["stale"] else LIMITS_TTL
+        never = _limits["data"] is None and _limits["error"] is None
+        if never or time.time() - _limits["at"] >= due:
+            try:
+                answer = await _control(claude_workspace.home(), {"subtype": "get_usage", "skip_behaviors": True},
+                                        timeout=30)
+                _limits.update(data=_plan_limits(answer), error=None)
+            except Exception as exc:
+                log.warning("get_usage failed: %s", exc)
+                _limits["error"] = f"Claude Code didn't report the plan limits: {str(exc)[:200] or type(exc).__name__}"
+            _limits.update(at=time.time(), stale=False)
+        data = _limits["data"] or {"available": False, "subscription": None, "windows": [], "fetched_at": None,
+                                   "source": None}
+        return {**data, "error": _limits["error"]}
+
+
+def note_rate_limit(info: dict) -> dict | None:
+    """Fold an official turn's rate_limit_event (a 0-1 fraction, epoch seconds) into the cached limits
+    and return them, so the page moves while Claude works instead of at the next poll."""
+    windows = info.get("unifiedWindows") if isinstance(info.get("unifiedWindows"), dict) else {}
+    cached = _limits["data"]
+    base = cached if cached and cached.get("available") else {"available": True, "subscription": None, "windows": []}
+    rows = [dict(w) for w in base["windows"]]
+    changed = False
+    for key, label in _NAMED_WINDOWS[:2]:
+        w = windows.get(key)
+        if not isinstance(w, dict) or w.get("utilization") is None:
+            continue
+        row = next((r for r in rows if r["key"] == key), None)
+        if row is None:
+            row = _window(key, label, 0, None)
+            rows.append(row)
+        fresh = _window(key, label, (w["utilization"] or 0) * 100, w.get("resetsAt"),
+                        _SEVERITY.get(w.get("status")) or row["severity"])
+        row.update(percent=fresh["percent"], resets_at=fresh["resets_at"] or row["resets_at"],
+                   severity=fresh["severity"])
+        changed = True
+    if not changed:
+        return None
+    data = {**base, "windows": rows, "fetched_at": time.time(), "source": "turn"}
+    # The headers don't carry the scoped weekly rows: the next read asks Claude Code again.
+    _limits.update(data=data, stale=True)
+    return {**data, "error": None}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket
+# ---------------------------------------------------------------------------
+
+def _validate_sid(value) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str) or not claude_sessions.UUID_RE.match(value):
+        raise ValueError("Invalid session ID")
+    return value
 
 
 async def handle_ws(ws: WebSocket):
     await ws.accept()
-    await ws.send_text(json.dumps({"type": "status", "state": "idle", "msg": "ready"}))
+
+    outbox: asyncio.Queue[str] = asyncio.Queue()
+    conn = id(outbox)
+
+    def send(raw: str) -> None:
+        if outbox.qsize() > OUTBOX_LIMIT and '"stream_event"' in raw[:40]:
+            return  # a stalled client loses live deltas, never the final messages
+        outbox.put_nowait(raw)
+
+    async def writer():
+        while True:
+            raw = await outbox.get()
+            await ws.send_text(raw)
+
+    writer_task = asyncio.ensure_future(writer())
+    send(json.dumps({"type": "status", "state": "idle", "msg": "ready"}))
 
     session_id: str | None = None
     session_model: str | None = None
     session_provider_id: str | None = None
-    current_proc: asyncio.subprocess.Process | None = None
-    current_task: asyncio.Task | None = None
+    session_cwd: str | None = None  # the followed session's folder; None for a new chat
+    attached: Run | None = None
+    bash_task: asyncio.Task | None = None
 
-    async def send(raw: str):
+    def turn_folder(msg: dict) -> Path:
+        """An existing session keeps its folder (--resume only finds it there); a new chat takes the
+        folder picked on the page."""
+        asked = msg.get("cwd") if isinstance(msg.get("cwd"), str) and msg.get("cwd") else None
+        if session_id:
+            folder = claude_workspace.folder(session_cwd)
+            if asked and claude_workspace.folder(asked) != folder:
+                raise ValueError(f"This conversation works in {folder}. Start a new chat to use another folder.")
+            return folder
+        return claude_workspace.folder(asked)
+
+    def detach() -> None:
+        nonlocal attached
+        if attached:
+            attached.subscribers.pop(conn, None)
+            attached = None
+
+    def error(msg: str) -> None:
+        send(json.dumps({"type": "status", "state": "error", "msg": msg}))
+
+    async def bash(command: str, client_id, folder: Path) -> None:
+        send(json.dumps({"type": "bash_start", "client_id": client_id, "command": command}))
         try:
-            await ws.send_text(raw)
-        except Exception:
-            pass
-
-    async def cancel_current():
-        nonlocal current_proc, current_task
-        if current_proc and current_proc.returncode is None:
-            try:
-                current_proc.send_signal(signal.SIGINT)
-            except ProcessLookupError:
-                pass
-        if current_task and not current_task.done():
-            current_task.cancel()
-            try:
-                await asyncio.wait_for(asyncio.shield(current_task), timeout=3)
-            except (Exception, asyncio.CancelledError):
-                pass
-        if current_proc:
-            try:
-                current_proc.kill()
-            except Exception:
-                pass
-            try:
-                await asyncio.wait_for(current_proc.wait(), timeout=3)
-            except Exception:
-                pass
-        current_proc = None
-        current_task = None
+            result = await claude_workspace.run_bash(command, _claude_env(), folder)
+        except asyncio.CancelledError:
+            result = {"stdout": "", "stderr": "Interrupted", "code": None}
+        except OSError as exc:
+            result = {"stdout": "", "stderr": f"Could not run the command ({exc.strerror or exc})", "code": None}
+        send(json.dumps({"type": "bash_result", "client_id": client_id, "command": command, **result}))
 
     try:
         while True:
@@ -323,44 +730,86 @@ async def handle_ws(ws: WebSocket):
                 msg = json.loads(raw_ws)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(msg, dict):
+                continue
+            if attached is not None:
+                session_id = attached.session_id or session_id
+                if attached.done:
+                    detach()
 
             kind = msg.get("type")
 
             if kind == "interrupt":
-                await cancel_current()
-                await ws.send_text(json.dumps({"type": "status", "state": "idle", "msg": ""}))
+                if bash_task and not bash_task.done():
+                    bash_task.cancel()
+                run = attached or (RUNS.get(session_id) if session_id else None)
+                if run and not run.done:
+                    await run.interrupt()
+                else:
+                    send(json.dumps({"type": "status", "state": "idle", "msg": ""}))
                 continue
 
             if kind == "resume":
-                # Client is telling us which session to continue (after page refresh or session switch)
-                given_sid = msg.get("session_id") or None
-                if given_sid is not None and not isinstance(given_sid, str):
-                    await send(json.dumps({"type": "status", "state": "error", "msg": "Invalid session ID"}))
+                try:
+                    given_sid = _validate_sid(msg.get("session_id"))
+                except ValueError as exc:
+                    error(str(exc))
                     continue
-                # If switching sessions, detach without killing previous session so it completes in background
-                if given_sid != session_id:
-                    current_proc = None
-                    current_task = None
-                binding = await asyncio.to_thread(claude_sessions.get_session_binding, given_sid) if given_sid else None
+                detach()
                 session_id = given_sid
+                binding = await asyncio.to_thread(claude_sessions.get_session_binding, given_sid) if given_sid else None
                 session_model = binding.get("model") if binding else None
                 session_provider_id = binding.get("provider_id") if binding else None
-                if given_sid and given_sid in ACTIVE_SESSIONS:
-                    await send(json.dumps({"type": "status", "state": "thinking", "msg": "working"}))
+                session_cwd = await asyncio.to_thread(claude_sessions.session_cwd, given_sid) if given_sid else None
+                run = RUNS.get(given_sid) if given_sid else None
+                if given_sid:
+                    try:
+                        detail = await asyncio.to_thread(claude_sessions.get_session, given_sid,
+                                                         run.history_bytes if run else None)
+                    except HTTPException:
+                        # A new session's transcript may not exist yet while its first turn runs.
+                        detail = {"id": given_sid, "messages": [], "missing": run is None}
+                    send(json.dumps({"type": "history", "session_id": given_sid, **detail}, ensure_ascii=False))
+                # Replay and subscribe without awaiting in between: no live event can overtake it.
+                run = RUNS.get(given_sid) if given_sid else None
+                if run is not None:
+                    for raw in list(run.events):
+                        send(raw)
+                    if not run.done:
+                        attached = run
+                        run.subscribers[conn] = send
+                send(json.dumps({"type": "attached", "session_id": given_sid, "running": attached is not None}))
+                continue
+
+            if kind == "bash":
+                command = str(msg.get("command", "")).strip()
+                if not command:
+                    continue
+                if bash_task and not bash_task.done():
+                    error("A bash command is still running")
+                    continue
+                try:
+                    folder = turn_folder(msg)
+                except ValueError as exc:
+                    error(str(exc))
+                    continue
+                bash_task = asyncio.ensure_future(bash(command, msg.get("client_id"), folder))
                 continue
 
             if kind != "user":
                 continue
 
             # --- New user turn ---
-            await cancel_current()
+            if (attached and not attached.done) or (session_id and session_id in running_ids()):
+                error("This session is still working. Wait for it or press Stop.")
+                continue
 
             text = str(msg.get("text", ""))
-            images = msg.get("images", [])
+            images = msg.get("images") if isinstance(msg.get("images"), list) else []
             if "model" in msg:
                 model_value = msg["model"]
                 if model_value is not None and not isinstance(model_value, str):
-                    await send(json.dumps({"type": "status", "state": "error", "msg": "Invalid model"}))
+                    error("Invalid model")
                     continue
                 if model_value != session_model and "provider_id" not in msg:
                     session_provider_id = None
@@ -368,51 +817,30 @@ async def handle_ws(ws: WebSocket):
             if "provider_id" in msg:
                 provider_value = msg["provider_id"]
                 if provider_value is not None and (not isinstance(provider_value, str) or not provider_value):
-                    await send(json.dumps({"type": "status", "state": "error", "msg": "Invalid provider"}))
+                    error("Invalid provider")
                     continue
                 session_provider_id = provider_value
-            model = session_model
-            provider_id = session_provider_id
+            mode = msg.get("permission_mode") or "bypassPermissions"
+            effort = msg.get("effort") or None
+            if mode not in PERMISSION_MODES or (effort is not None and effort not in EFFORT_LEVELS):
+                error("Invalid permission mode or effort")
+                continue
+            client_id = msg.get("client_id") if isinstance(msg.get("client_id"), str) else None
 
-            await ws.send_text(json.dumps({"type": "status", "state": "thinking", "msg": ""}))
-
-            loop = asyncio.get_running_loop()
-            first_line_fut: asyncio.Future[None] = loop.create_future()
-
-            async def _turn():
-                nonlocal session_id, current_proc
-                if session_id:
-                    ACTIVE_SESSIONS.add(session_id)
-                try:
-                    sid, proc = await _run_turn(text, images, session_id, model, first_line_fut, send, provider_id=provider_id)
-                    current_proc = proc
-                    if sid and sid != session_id:
-                        session_id = sid
-                        ACTIVE_SESSIONS.add(sid)
-                        # Tell client the session_id so it can resume after refresh
-                        await send(json.dumps({"type": "session", "session_id": sid}))
-                except asyncio.CancelledError:
-                    log.info("Turn cancelled by user")
-                except Exception as e:
-                    log.error("Claude turn failed (%s)", type(e).__name__)
-                    await send(json.dumps({
-                        "type": "assistant",
-                        "error": str(e) if isinstance(e, providers.ProviderError) else "Unable to run Claude Code. Check provider settings and try again.",
-                        "is_api_error_message": True,
-                    }))
-                finally:
-                    if session_id:
-                        ACTIVE_SESSIONS.discard(session_id)
-                    if not first_line_fut.done():
-                        first_line_fut.set_result(None)
-                    await send(json.dumps({"type": "status", "state": "idle", "msg": ""}))
-
-            current_task = asyncio.ensure_future(_turn())
-            # Attach proc reference as early as possible (after first stdout line)
             try:
-                await asyncio.wait_for(asyncio.shield(first_line_fut), timeout=30)
-            except asyncio.TimeoutError:
-                pass
+                folder = turn_folder(msg)
+            except ValueError as exc:
+                error(str(exc))
+                continue
+            session_cwd = str(folder)
+            locked = msg.get("locked") is True
+
+            run = Run(session_id)
+            RUNS[run.key] = run
+            attached = run
+            run.subscribers[conn] = send
+            run.task = asyncio.ensure_future(run.execute(
+                text, images, session_model, session_provider_id, mode, effort, client_id, folder, locked))
 
     except WebSocketDisconnect:
         pass
@@ -423,8 +851,8 @@ async def handle_ws(ws: WebSocket):
         except Exception:
             pass
     finally:
-        # Keep background Claude Code subprocess running even if client WebSocket disconnects
-        # (e.g. page refresh, network drop, or tab close).
-        # Subprocess writes outputs safely to ~/.claude session files.
-        # Process cancellation is reserved for explicit user 'interrupt'.
-        pass
+        # The turn keeps running without this socket; resuming its session re-attaches.
+        detach()
+        if bash_task and not bash_task.done():
+            bash_task.cancel()
+        writer_task.cancel()

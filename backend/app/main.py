@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSoc
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, claude_chat, claude_sessions, db, energy, provider_api, providers, router_chat, router_sessions, sampler, terminal
+from . import auth, claude_chat, claude_sessions, claude_workspace, db, energy, provider_api, providers, router_chat, router_sessions, sampler, terminal
 from .collectors import services, speedtest, system
 from .config import FRONTEND_DIST, PUBLIC_ORIGIN, TARIFF_PRESETS
 
@@ -285,6 +285,24 @@ async def open_terminal(body: dict, request: Request):
     return terminal.Session(body.get("cols"), body.get("rows")).info()
 
 
+@app.post("/api/terminal/upload")
+async def terminal_upload(request: Request, name: str = ""):
+    _same_origin(request)
+    tmp, f = await _threaded(terminal.open_upload)
+    size, head = 0, b""
+    try:
+        with f:  # streamed to disk: uploads can be up to MAX_UPLOAD
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > terminal.MAX_UPLOAD:
+                    raise HTTPException(413, f"files up to {terminal.MAX_UPLOAD >> 20} MB")
+                head = (head + chunk[:16])[:16]
+                await _threaded(f.write, chunk)
+        return {"path": await _threaded(terminal.finish_upload, tmp, name, head)}
+    finally:
+        tmp.unlink(missing_ok=True)  # only still there when the upload failed or was cut off
+
+
 @app.delete("/api/terminal/{sid}")
 async def close_terminal(sid: str, request: Request):
     _same_origin(request)
@@ -336,7 +354,86 @@ async def ws_claude(ws: WebSocket):
 
 @app.get("/api/claude/sessions")
 async def claude_sessions_list():
-    return await _threaded(claude_sessions.list_sessions)
+    sessions = await _threaded(claude_sessions.list_sessions)
+    running = claude_chat.running_ids()
+    for s in sessions:
+        s["running"] = s["id"] in running
+    return sessions
+
+
+def _claude_folder(path: str | None):
+    """A chat's folder from a request; 400 when it isn't a readable directory."""
+    try:
+        return claude_workspace.folder(path or None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.get("/api/claude/capabilities")
+async def claude_capabilities(request: Request, refresh: bool = False, cwd: str = ""):
+    """Slash commands, agents and native models as the installed CLI reports them (per folder)."""
+    _same_origin(request)  # a refresh starts the CLI
+    folder = await _threaded(_claude_folder, cwd)
+    try:
+        return await claude_chat.capabilities(refresh, folder)
+    except Exception as exc:
+        raise HTTPException(503, f"Could not ask Claude Code for its commands ({type(exc).__name__})") from None
+
+
+@app.get("/api/claude/limits")
+async def claude_limits(request: Request, refresh: bool = False):
+    """The official Claude login's plan limits (5-hour, weekly), whatever model a chat uses."""
+    _same_origin(request)  # a probe starts the CLI
+    return await claude_chat.plan_limits(refresh)
+
+
+@app.get("/api/claude/folders")
+async def claude_folders(request: Request, path: str = ""):
+    _same_origin(request)
+    try:
+        return await _threaded(claude_workspace.list_folders, path or None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.get("/api/claude/files")
+async def claude_files(request: Request, q: str = "", cwd: str = ""):
+    _same_origin(request)
+    folder = await _threaded(_claude_folder, cwd)
+    return await _threaded(claude_workspace.search_files, q[:300], 40, folder)
+
+
+@app.get("/api/claude/memory")
+async def claude_memory(request: Request, cwd: str = ""):
+    _same_origin(request)
+    folder = await _threaded(_claude_folder, cwd)
+    return await _threaded(claude_workspace.read_memory, folder)
+
+
+@app.post("/api/claude/memory")
+async def claude_memory_add(request: Request):
+    _same_origin(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Invalid memory note")
+    folder = await _threaded(_claude_folder, str(body.get("cwd") or ""))
+    try:
+        return await _threaded(claude_workspace.append_memory, str(body.get("scope", "")), str(body.get("text", "")), folder)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.put("/api/claude/memory/{scope}")
+async def claude_memory_write(scope: str, request: Request, cwd: str = ""):
+    _same_origin(request)
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("content"), str):
+        raise HTTPException(400, "content must be a string")
+    folder = await _threaded(_claude_folder, cwd)
+    try:
+        return await _threaded(claude_workspace.write_memory, scope, body["content"], folder)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 @app.get("/api/claude/sessions/{session_id}")

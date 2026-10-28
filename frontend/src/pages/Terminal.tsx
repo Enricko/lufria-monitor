@@ -1,4 +1,4 @@
-import { AArrowDown, AArrowUp, ClipboardPaste, Copy, Plus, SquareTerminal, X } from "lucide-react";
+import { AArrowDown, AArrowUp, ClipboardPaste, Copy, Paperclip, Plus, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type RefObject } from "react";
 import { api } from "../api";
 import { APPLE, TerminalView, type TerminalHandle } from "../components/TerminalView";
@@ -157,7 +157,7 @@ export function Terminal({ active }: { active: boolean }) {
               return (
                 <div
                   key={s.id}
-                  className={`flex h-9 shrink-0 items-center rounded-lg text-sm transition-colors duration-150 ${
+                  className={`flex h-9 min-w-24 items-center rounded-lg text-sm transition-colors duration-150 ${
                     selected ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"
                   }`}
                 >
@@ -166,7 +166,7 @@ export function Terminal({ active }: { active: boolean }) {
                     role="tab"
                     aria-selected={selected}
                     onClick={() => dispatch({ type: "select", id: s.id })}
-                    className="h-full max-w-56 cursor-pointer truncate pl-3 pr-1.5 font-mono text-xs"
+                    className="h-full min-w-0 max-w-56 cursor-pointer truncate pl-3 pr-1.5 font-mono text-xs"
                     title={titles[s.id]}
                   >
                     {titles[s.id] || `shell ${i + 1}`}
@@ -175,7 +175,7 @@ export function Terminal({ active }: { active: boolean }) {
                     type="button"
                     aria-label={`Close ${titles[s.id] || `shell ${i + 1}`}`}
                     onClick={() => close(s.id)}
-                    className="mr-1 grid size-7 cursor-pointer place-items-center rounded-md hover:bg-line-strong"
+                    className="mr-1 grid size-7 shrink-0 cursor-pointer place-items-center rounded-md hover:bg-line-strong"
                   >
                     <X size={14} aria-hidden />
                   </button>
@@ -240,6 +240,17 @@ export function Terminal({ active }: { active: boolean }) {
               className={TOOL}
             >
               <ClipboardPaste size={16} aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label="Upload files"
+              title="Upload files and paste their path on the server (Claude Code attaches images and can read the rest). Dropping or pasting files into the terminal does the same"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => current && views.current.get(current)?.attach()}
+              disabled={!current}
+              className={TOOL}
+            >
+              <Paperclip size={16} aria-hidden />
             </button>
           </div>
         </div>
