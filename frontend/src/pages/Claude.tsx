@@ -1,4 +1,4 @@
-import { ArrowDown, BarChart2, Bot, Folder, Image, Loader, Lock, LockOpen, Menu, Plus, Send, Square, X } from "lucide-react";
+import { ArrowDown, BarChart2, Bot, Folder, Image, Loader, Lock, LockOpen, Menu, PanelRight, Plus, Send, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { CommandPalette } from "../components/CommandPalette";
@@ -10,6 +10,7 @@ import { FolderPicker, type FolderChoice } from "../claude/FolderPicker";
 import { formatCost, formatModelBadge, formatTokens, shortPath } from "../claude/format";
 import { legacyTextToParts, partsToText } from "../claude/markdown";
 import { MemoryModal } from "../claude/MemoryModal";
+import { ModelLivePanel } from "../claude/ModelLivePanel";
 import { MessageParts, NoticeRow } from "../claude/MessageView";
 import { Sidebar, type SessionSource, type UnifiedSession } from "../claude/Sidebar";
 import { PlanLimitsChip, usePlanLimits } from "../claude/PlanLimits";
@@ -34,6 +35,7 @@ const EFFORT_KEY = "claude.chat.effort";
 const PROMPTS_KEY = "claude.chat.prompt_history";
 const FOLDER_KEY = "claude.chat.folder";
 const LOCK_KEY = "claude.chat.locked";
+const PANEL_KEY = "claude.chat.model_panel";
 
 type ConnState = "connecting" | "idle" | "thinking" | "error" | "closed";
 
@@ -229,6 +231,8 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   const [routerUsage, setRouterUsage] = useState<UsageResponse | null>(null);
   const [usagePeriod, setUsagePeriod] = useState<UsagePeriod>("all_time");
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(() => (load(PANEL_KEY) ?? (window.innerWidth >= 1280 ? "1" : "0")) === "1");
+  useEffect(() => { store(PANEL_KEY, panelOpen ? "1" : "0"); }, [panelOpen]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const isAtBottomRef = useRef(true);
 
@@ -1144,6 +1148,11 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
 
   let lastModel: string | undefined;
 
+  const answeredBy = [...messages].reverse().find((m) => m.role === "assistant" && m.model && m.model !== "local")?.model ?? initInfo?.model ?? null;
+  const liveChars = running ? messages[messages.length - 1]?.streaming?.length ?? 0 : 0;
+  const lastTurn = [...turnUsages.values()].pop() ?? null;
+  const pickedNative = caps?.models.find((m) => m.value === selectedModel);
+
   return (
     <div className="relative flex h-full w-full overflow-hidden" style={{ display: active ? undefined : "none" }}>
       {historyModalOpen && usageData && <UsageHistoryModal usage={usageData} onClose={() => setHistoryModalOpen(false)} />}
@@ -1201,6 +1210,10 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
           <div className="agent-toolbar-actions">
             {!sidebarOpen && <PlanLimitsChip limits={planLimits.limits} onClick={() => setSidebarOpen(true)} />}
             <StatusPill state={connState} />
+            <button type="button" onClick={() => setPanelOpen((o) => !o)} title="Model in use" aria-label="Model in use"
+              aria-pressed={panelOpen} className={`agent-icon-button hover:bg-surface-2 hover:text-fg ${panelOpen ? "text-accent" : "text-muted"}`}>
+              <PanelRight size={17} />
+            </button>
             <button type="button" onClick={() => setHistoryModalOpen(true)} title="Usage history" aria-label="Usage history"
               className="agent-icon-button text-muted hover:bg-surface-2 hover:text-fg">
               <BarChart2 size={17} />
@@ -1490,6 +1503,20 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
           {!isArchived && <UsageBar usage={sessionUsage} subscription={caps?.account.subscription ?? null} />}
         </div>
       </div>
+
+      {panelOpen && (
+        <>
+          <div className="fixed inset-0 z-20 bg-black/50 xl:hidden" onClick={() => setPanelOpen(false)} />
+          <aside aria-label="Model in use"
+            className="fixed inset-y-0 right-0 z-30 w-[min(20rem,92vw)] border-l border-line bg-surface xl:static xl:z-auto xl:w-80 xl:shrink-0">
+            <ModelLivePanel
+              selected={{ value: selectedModel, name: pickedNative?.display_name ?? formatModelBadge(selectedModel), note: pickedNative?.description }}
+              currentModel={answeredBy} running={running} activity={activity} streamedChars={liveChars}
+              usage={sessionUsage} replies={messages.filter((m) => m.role === "assistant" && !m.local).length}
+              lastTurn={lastTurn} onClose={() => setPanelOpen(false)} />
+          </aside>
+        </>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { BarChart2, Coins, TrendingUp, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AnalyticsOverview } from "./AnalyticsOverview";
 import { formatCost, formatTokens } from "./format";
 
 export type UsagePeriod = "today" | "week" | "month" | "all_time";
@@ -44,6 +45,7 @@ export function UsageHistoryModal({
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [tab, setTab] = useState<"overview" | "details">("overview");
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const dialog = dialogRef.current;
@@ -67,7 +69,7 @@ export function UsageHistoryModal({
     >
       <div
         ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="usage-history-title"
-        className="flex max-h-[88vh] w-full max-w-4xl flex-col rounded-2xl border border-line bg-surface shadow-2xl overflow-hidden"
+        className="flex max-h-[92vh] w-full max-w-6xl flex-col rounded-2xl border border-line bg-surface shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -75,9 +77,16 @@ export function UsageHistoryModal({
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             <Coins className="text-accent size-5 shrink-0" />
             <div className="min-w-0">
-              <h2 id="usage-history-title" className="text-sm sm:text-base font-semibold text-fg truncate">Usage & Cost History</h2>
-              <p className="text-[11px] sm:text-xs text-muted truncate">Token & cost breakdown across conversations</p>
+              <h2 id="usage-history-title" className="text-sm sm:text-base font-semibold text-fg truncate">Usage & Analytics</h2>
+              <p className="text-[11px] sm:text-xs text-muted truncate">Live requests, tokens and cost across every conversation</p>
             </div>
+          </div>
+          <div role="group" aria-label="Usage view" className="mx-3 hidden shrink-0 gap-0.5 rounded-lg bg-surface-2 p-0.5 sm:inline-flex">
+            {(["overview", "details"] as const).map((id) => (
+              <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)}
+                className={`cursor-pointer rounded-md px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                  tab === id ? "bg-bg text-fg shadow-xs" : "text-muted hover:text-fg-2"}`}>{id}</button>
+            ))}
           </div>
           <button
             type="button"
@@ -91,6 +100,7 @@ export function UsageHistoryModal({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-3.5 sm:p-6 space-y-4 sm:space-y-6">
+          {tab === "overview" ? <AnalyticsOverview /> : <>
           {/* Summary Cards Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
@@ -186,6 +196,7 @@ export function UsageHistoryModal({
               </div>
             </div>
           )}
+          </>}
         </div>
       </div>
     </div>

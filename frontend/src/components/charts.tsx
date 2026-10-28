@@ -36,7 +36,7 @@ function ChartTip({ active, payload, label, format, labelFormat }: {
 }
 
 /** Time-series area chart (history or live). One y-axis, 2px lines, 10% wash. */
-export const TimeChart = memo(function TimeChart({ data, series, format, axisFormat, height = 220, max, stacked, longRange, live }: {
+export const TimeChart = memo(function TimeChart({ data, series, format, axisFormat, height = 220, max, stacked, longRange, live, xTick }: {
   data: Record<string, number | null>[];
   series: Series[];
   format: (v: number) => string;
@@ -46,11 +46,13 @@ export const TimeChart = memo(function TimeChart({ data, series, format, axisFor
   stacked?: boolean;
   longRange?: boolean;
   live?: boolean;
+  /** Overrides the x labels (bucketed data: hours or days). */
+  xTick?: (t: number) => string;
 }) {
-  const xFormat = (t: number) =>
+  const xFormat = xTick ?? ((t: number) =>
     live
       ? new Date(t * 1000).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit" })
-      : longRange ? dateTime(t) : time(t);
+      : longRange ? dateTime(t) : time(t));
   return (
     <div>
       {series.length > 1 && (

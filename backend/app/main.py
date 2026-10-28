@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSoc
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, claude_chat, claude_sessions, claude_workspace, db, energy, provider_api, providers, router_chat, router_sessions, sampler, terminal
+from . import auth, claude_analytics, claude_chat, claude_sessions, claude_workspace, db, energy, provider_api, providers, router_chat, router_sessions, sampler, terminal
 from .collectors import services, speedtest, system
 from .config import FRONTEND_DIST, PUBLIC_ORIGIN, TARIFF_PRESETS
 
@@ -449,6 +449,13 @@ async def claude_sessions_delete(session_id: str):
 @app.get("/api/claude/usage")
 async def claude_usage():
     return await _threaded(claude_sessions.get_usage)
+
+
+@app.get("/api/claude/analytics")
+async def claude_analytics_snapshot(range: str = "today"):
+    if range not in claude_analytics.RANGES:
+        raise HTTPException(400, "range must be one of " + ", ".join(claude_analytics.RANGES))
+    return await _threaded(claude_analytics.snapshot, range)
 
 
 @app.websocket("/ws/router")
