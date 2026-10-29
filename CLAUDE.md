@@ -36,3 +36,17 @@ This project is independent of the migration notes in ~/CLAUDE.md.
   Passkeys can't work on the LAN IP over http (not a secure context): sign in there with the QR code.
   Recovery when every device is lost: `cd backend && .venv/bin/python -m app.auth enroll` (one-time link, 15 min).
   Challenges and QR requests live in the uvicorn process memory, so a restart cancels pending ones.
+- File viewer (`frontend/src/claude/FileViewer.tsx`, `/api/claude/dir|file|file/raw|file/stat`): reads anything the
+  service user can read (no root allowlist; a login is already a root shell). Routes check Origin *and* Sec-Fetch-Site
+  (`<img>` sends no Origin). Non-regular files are refused before open; PCI config/rom/resource is refused (wakes the dGPU).
+  `raw` serves images/video/audio inline (Range via FileResponse) and anything with `download=1` (octet-stream).
+- Attachments: every turn gets `SYSTEM_APPEND` (`claude_chat.py`, `--append-system-prompt`): give file paths in inline
+  code, never scp. The CLI records the system prompt on a conversation's first request and replays it on resume
+  (`--system-prompt-snapshot`, on by default), so the appended text must be identical for every model/combo: a
+  changed text only reaches new (or compacted) conversations. Replies' inline-code paths open the viewer (`claude/paths.ts`); deliverable ones (media, docs,
+  archives) that exist show under the message (`claude/Attachments.tsx`).
+- Claude Code's dialogs (tool permission, AskUserQuestion, plan approval): turns run with `--permission-prompt-tool stdio`;
+  the CLI's `can_use_tool` control requests become `prompt` events (`Run.control`), drawn by `claude/PromptCard.tsx`, and
+  the page's pick goes back on stdin (`Run.answer`) within the same turn. `_permission_result` keeps the tool input the
+  CLI's own and grants only the CLI's `permission_suggestions` (or a session mode from ExitPlanMode): keep it that way.
+  Open prompts live in the uvicorn process (`Run.prompts`), so a restart cancels them along with the turn.

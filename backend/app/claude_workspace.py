@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import sys
 from pathlib import Path
 
@@ -27,6 +28,18 @@ SANDBOX_TOOLS = ("bwrap", "socat")  # what Claude Code's sandbox needs on Linux
 GUARD_SCRIPT = Path(__file__).with_name("folder_guard.py")
 WRITE_TOOLS = "Edit|Write|MultiEdit|NotebookEdit"
 SANDBOX_HIDDEN_SOCKETS = ["/var/run/docker.sock", "/run/docker.sock", "/run/podman/podman.sock"]
+PREVIEW_TEXT_LIMIT = 512 * 1024
+PREVIEW_IMAGE_LIMIT = 25 * 1024 * 1024
+DIR_LIST_LIMIT = 2000
+STAT_LIMIT = 20
+# Shown inline by the viewer and as chat attachments; any other file is download-only.
+MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+               ".webp": "image/webp", ".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon",
+               ".svg": "image/svg+xml",
+               ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+               ".ogv": "video/ogg",
+               ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg",
+               ".opus": "audio/ogg", ".m4a": "audio/mp4", ".flac": "audio/flac", ".aac": "audio/aac"}
 
 
 def home() -> Path:
@@ -81,6 +94,129 @@ def list_folders(path: str | None) -> dict:
         "dirs": [{"name": d, "path": str(base / d)} for d in dirs[:FOLDER_LIST_LIMIT]],
         "truncated": len(dirs) > FOLDER_LIST_LIMIT,
     }
+
+
+def preview_path(path: str, root: Path | None = None) -> Path:
+    """A path from the chat (absolute, ~ or relative to the chat's folder), resolved."""
+    if "\0" in path:
+        raise ValueError("Invalid path")
+    try:
+        p = Path(path).expanduser() if path else (root or cwd())
+    except RuntimeError:  # ~nosuchuser
+        raise ValueError(f"Unknown home folder: {path}") from None
+    return (p if p.is_absolute() else (root or cwd()) / p).resolve()
+
+
+def list_dir(path: str, root: Path | None = None) -> dict:
+    """File viewer: the files and folders of one folder, folders first."""
+    base = preview_path(path, root)
+    if not base.is_dir():
+        raise ValueError(f"Not a folder: {base}")
+    entries = []
+    try:
+        with os.scandir(base) as it:
+            for entry in it:
+                try:
+                    is_dir = entry.is_dir()
+                    size = None if is_dir else entry.stat().st_size
+                except OSError:  # broken symlink, vanished
+                    is_dir, size = False, None
+                entries.append({"name": entry.name, "dir": is_dir, "size": size})
+    except OSError as exc:
+        raise ValueError(f"Can't read {base}: {exc.strerror}") from None
+    entries.sort(key=lambda e: (not e["dir"], e["name"].lower()))
+    return {
+        "path": str(base),
+        "parent": str(base.parent) if base != base.parent else None,
+        "entries": entries[:DIR_LIST_LIMIT],
+        "truncated": len(entries) > DIR_LIST_LIMIT,
+    }
+
+
+def _regular(p: Path) -> os.stat_result:
+    """A regular file's stat. Anything else is refused before it's opened (opening a FIFO releases its
+    writer, a serial tty resets its board)."""
+    if str(p).startswith("/sys/devices/") and (p.name in ("config", "rom") or p.name.startswith("resource")):
+        raise ValueError(f"Not previewed: reading {p.name} would wake the PCI device")
+    try:
+        st = os.stat(p)
+    except FileNotFoundError:
+        raise ValueError(f"No such file: {p}") from None
+    except OSError as exc:
+        raise ValueError(f"Can't read {p}: {exc.strerror}") from None
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(f"Not a regular file: {p}")
+    return st
+
+
+def _read_regular(p: Path, limit: int) -> tuple[bytes, os.stat_result]:
+    """Up to limit + 1 bytes of a regular file; O_NONBLOCK + fstat cover a swap after the check."""
+    _regular(p)
+    try:
+        fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as exc:
+        raise ValueError(f"Can't read {p}: {exc.strerror}") from None
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"Not a regular file: {p}")
+        return f.read(limit + 1), st
+
+
+def read_preview(path: str, root: Path | None = None) -> dict:
+    """File viewer: a file's text, or what kind of file it is (folder, image, video, audio, binary)."""
+    p = preview_path(path, root)
+    if p.is_dir():
+        return {"kind": "dir", "path": str(p), "name": p.name}
+    mime = MEDIA_TYPES.get(p.suffix.lower())
+    data, st = _read_regular(p, 0 if mime else PREVIEW_TEXT_LIMIT)
+    info = {"path": str(p), "name": p.name, "size": st.st_size, "mtime": st.st_mtime}
+    if mime:
+        kind = mime.split("/")[0]
+        if kind == "image" and st.st_size > PREVIEW_IMAGE_LIMIT:
+            return {**info, "kind": "binary"}
+        return {**info, "kind": kind, "mime": mime}
+    if b"\0" in data[:8192]:
+        return {**info, "kind": "binary"}
+    truncated = len(data) > PREVIEW_TEXT_LIMIT
+    text = data[:PREVIEW_TEXT_LIMIT].decode("utf-8", errors="replace")
+    return {**info, "kind": "text", "text": text, "truncated": truncated}
+
+
+def raw_file(path: str, root: Path | None = None, download: bool = False) -> tuple[Path, str, os.stat_result]:
+    """A file to send as-is: images, video and audio inline; anything as a download (octet-stream)."""
+    p = preview_path(path, root)
+    st = _regular(p)
+    if not os.access(p, os.R_OK):
+        raise ValueError(f"No access to {p}")
+    if download:
+        return p, "application/octet-stream", st
+    mime = MEDIA_TYPES.get(p.suffix.lower())
+    if not mime:
+        raise ValueError(f"No inline preview for {p.name}")
+    if mime.startswith("image/") and st.st_size > PREVIEW_IMAGE_LIMIT:
+        raise ValueError(f"Too large to preview: {p}")
+    return p, mime, st
+
+
+def stat_files(paths: list[str], root: Path | None = None, relative: bool = True) -> list[dict]:
+    """Chat attachments: which of the paths a reply mentions are files that exist, and what kind.
+    `relative=False`: the chat's folder is gone, so relative paths can't mean anything."""
+    out = []
+    for path in paths[:STAT_LIMIT]:
+        if not relative and not path.startswith(("/", "~")):
+            out.append({"path": path, "exists": False})
+            continue
+        try:
+            p = preview_path(path, root)
+            st = _regular(p)
+        except (ValueError, OSError, RuntimeError):
+            out.append({"path": path, "exists": False})
+            continue
+        mime = MEDIA_TYPES.get(p.suffix.lower(), "")
+        out.append({"path": path, "exists": True, "resolved": str(p), "name": p.name, "size": st.st_size,
+                    "mtime": st.st_mtime, "kind": mime.split("/")[0] if mime else "file"})
+    return out
 
 
 def sandbox_missing() -> list[str]:

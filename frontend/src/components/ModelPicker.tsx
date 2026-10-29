@@ -118,9 +118,11 @@ export function ModelPicker({ models, providers, value, disabled, loading, error
           {nativeMatches.length > 0 && <section className="border-t border-line">
             <p className="model-picker-label pt-3">Claude · official</p>
             {nativeMatches.map((n) => {
-              const active = !value.provider_id && value.model === n.value;
+              const active = n.route ? value.model === n.route.model && value.provider_id === n.route.provider_id
+                : !value.provider_id && value.model === n.value;
               return <button type="button" key={`native:${n.value}`} data-model-id={n.value} aria-pressed={active}
-                className={`model-picker-option ${active ? "is-selected" : ""}`} onClick={() => choose(n.value, null)}>
+                className={`model-picker-option ${active ? "is-selected" : ""}`}
+                onClick={() => n.route ? choose(n.route.model, n.route.provider_id) : choose(n.value, null)}>
                 <span className="min-w-0 flex-1 text-left"><span className="block text-sm font-medium break-words">{n.value === "default" ? "Claude Default" : n.display_name}</span>
                   <span className="mt-0.5 block text-[11px] text-muted break-words">{n.description || n.value}</span></span>
                 {active && <Check size={16} className="shrink-0 text-accent" aria-hidden/>}

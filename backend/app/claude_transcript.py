@@ -35,8 +35,33 @@ def tool_summary(name: str, inp) -> str:
         return f"{len(inp['todos'])} todos"
     if name == "ExitPlanMode":
         return "Plan ready for review"
+    questions = _questions(inp) if name == "AskUserQuestion" else []
+    if questions:
+        first = questions[0]["question"].strip()
+        return first.splitlines()[0][:300] if first else "Questions for you"
     text = json.dumps(inp, ensure_ascii=False)
     return text[:300]
+
+
+def _questions(inp: dict) -> list[dict]:
+    """AskUserQuestion's questions, reduced to what the page draws."""
+    out = []
+    for q in inp.get("questions") if isinstance(inp.get("questions"), list) else []:
+        if not isinstance(q, dict) or not isinstance(q.get("question"), str):
+            continue
+        options = [{"label": str(o.get("label", ""))[:300], "description": str(o.get("description") or "")[:1000]}
+                   for o in q.get("options") or [] if isinstance(o, dict)]
+        out.append({"question": q["question"][:2000], "header": str(q.get("header") or "")[:60],
+                    "multiSelect": q.get("multiSelect") is True, "options": options[:8]})
+    return out[:8]
+
+
+def question_answers(result) -> dict | None:
+    """The answers an AskUserQuestion result recorded ({question: answer}), if any."""
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict):
+        return None
+    return {str(k)[:2000]: str(v)[:4000] for k, v in list(answers.items())[:20]}
 
 
 def tool_part(block: dict) -> dict:
@@ -46,9 +71,14 @@ def tool_part(block: dict) -> dict:
             "summary": tool_summary(name, inp), "output": "", "is_error": False, "done": False}
     if name == "ExitPlanMode" and isinstance(inp.get("plan"), str):
         part["plan"] = inp["plan"][:TOOL_OUTPUT_LIMIT]
+    if name == "AskUserQuestion" and _questions(inp):
+        part["questions"] = _questions(inp)
     if name == "TodoWrite" and isinstance(inp.get("todos"), list):
         part["todos"] = [{"content": str(t.get("content", ""))[:300], "status": str(t.get("status", ""))}
                          for t in inp["todos"][:50] if isinstance(t, dict)]
+    path = inp.get("file_path") or inp.get("notebook_path")
+    if isinstance(path, str) and path.strip():
+        part["path"] = path.strip()  # the page can open it in the file viewer
     if name in ("Edit", "Write", "MultiEdit") and isinstance(inp.get("file_path"), str):
         diff = _edit_preview(inp)
         if diff:
@@ -122,7 +152,7 @@ def parse_user_string(text: str) -> list[dict]:
 
 
 def _strip_ansi(text: str) -> str:
-    return re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)
+    return re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", text)
 
 
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
@@ -272,6 +302,9 @@ class Thread:
                     tool["output"] = tool_result_text(block.get("content"))
                     tool["is_error"] = bool(block.get("is_error"))
                     tool["done"] = True
+                    answers = question_answers(obj.get("toolUseResult")) if tool["name"] == "AskUserQuestion" else None
+                    if answers is not None:
+                        tool["answers"] = answers
             elif kind == "text":
                 parts += parse_user_string(str(block.get("text", "")))
             elif kind == "image":

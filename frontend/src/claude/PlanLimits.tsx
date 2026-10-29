@@ -4,7 +4,7 @@ import { api } from "../api";
 import { formatAgo } from "./format";
 import type { PlanLimits, PlanWindow } from "./types";
 
-const POLL_MS = 60_000; // the server shares one probe per 30 s between every page
+const POLL_MS = 60_000; // cheap: the server shares one probe per 5 min between every page
 
 /** The official Claude login's plan limits, whatever model the chat uses: read on open, every minute while
  * the page is visible, and live from official turns (`accept`). */

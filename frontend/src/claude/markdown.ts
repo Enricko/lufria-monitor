@@ -1,5 +1,6 @@
 // Small Markdown renderer for chat text. Everything is escaped first, so model output,
 // file contents and transcripts can never inject markup into the dashboard.
+import { filePath } from "./paths";
 import type { Part } from "./types";
 
 export function escapeHtml(str: string): string {
@@ -9,9 +10,16 @@ export function escapeHtml(str: string): string {
 
 const HOLD = "\u0000";
 
-function inline(text: string, held: string[]): string {
+function inline(text: string, held: string[], paths: boolean): string {
   const hold = (html: string) => `${HOLD}${held.push(html) - 1}${HOLD}`;
-  text = text.replace(/`([^`\n]+)`/g, (_, c) => hold(`<code class="md-code">${c}</code>`));
+  // `paths`: code naming a file becomes a button for the file viewer (the chat handles clicks on [data-path]).
+  // `c` is escaped already: safe in the attribute, and the browser decodes it back to the real path.
+  text = text.replace(/`([^`\n]+)`/g, (_, c) => {
+    const path = paths ? filePath(c) : null;
+    return hold(path
+      ? `<code class="md-code md-path" data-path="${path}" role="button" tabindex="0" title="Open ${path}">${c}</code>`
+      : `<code class="md-code">${c}</code>`);
+  });
   // Links: http(s) only; text and URL are already escaped.
   text = text.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
     (_, label, url) => hold(`<a class="md-link" href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`));
@@ -27,7 +35,8 @@ function tableRow(line: string): string[] {
   return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 }
 
-export function renderMarkdown(src: string): string {
+/** `paths`: make inline code that names a file clickable (chat messages). */
+export function renderMarkdown(src: string, { paths = false }: { paths?: boolean } = {}): string {
   const held: string[] = [];
   const hold = (html: string) => `${HOLD}${held.push(html) - 1}${HOLD}`;
 
@@ -56,8 +65,8 @@ export function renderMarkdown(src: string): string {
       i += 2;
       while (i < lines.length && lines[i].trim().startsWith("|")) rows.push(tableRow(lines[i++]));
       i--;
-      out.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${head.map((c) => `<th>${inline(c, held)}</th>`).join("")}</tr></thead><tbody>${
-        rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c, held)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      out.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${head.map((c) => `<th>${inline(c, held, paths)}</th>`).join("")}</tr></thead><tbody>${
+        rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c, held, paths)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
       continue;
     }
 
@@ -65,11 +74,11 @@ export function renderMarkdown(src: string): string {
     if (heading) {
       closeList();
       const level = Math.min(heading[1].length, 3);
-      out.push(`<h${level} class="md-h${level}">${inline(heading[2], held)}</h${level}>`);
+      out.push(`<h${level} class="md-h${level}">${inline(heading[2], held, paths)}</h${level}>`);
       continue;
     }
     const quote = trimmed.match(/^&gt;\s?(.*)/);
-    if (quote) { closeList(); out.push(`<blockquote class="md-quote">${inline(quote[1], held)}</blockquote>`); continue; }
+    if (quote) { closeList(); out.push(`<blockquote class="md-quote">${inline(quote[1], held, paths)}</blockquote>`); continue; }
 
     const bullet = line.match(/^\s*[-*+]\s+(.*)/);
     const numbered = line.match(/^\s*\d+[.)]\s+(.*)/);
@@ -79,11 +88,11 @@ export function renderMarkdown(src: string): string {
       let item = (bullet || numbered)![1];
       const box = item.match(/^\[( |x|X)\]\s+(.*)/);
       if (box) item = `${box[1] === " " ? "☐" : "☑"} ${box[2]}`;
-      out.push(`<li>${inline(item, held)}</li>`);
+      out.push(`<li>${inline(item, held, paths)}</li>`);
       continue;
     }
     closeList();
-    out.push(`<p class="md-p">${inline(line, held)}</p>`);
+    out.push(`<p class="md-p">${inline(line, held, paths)}</p>`);
   }
   closeList();
 

@@ -1,24 +1,27 @@
-import { ArrowDown, BarChart2, Bot, Folder, Image, Loader, Lock, LockOpen, Menu, PanelRight, Plus, Send, Square, X } from "lucide-react";
+import { ArrowDown, BarChart2, Bot, Folder, FolderSearch, Image, Loader, Lock, LockOpen, Menu, PanelRight, Plus, Send, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { CommandPalette } from "../components/CommandPalette";
-import { FeedbackSuggestions } from "../components/FeedbackSuggestions";
 import { ModelPicker } from "../components/ModelPicker";
 import type { AgentModel, ModelSelection, Provider, ProviderCatalog } from "../provider-types";
 import { findPageCommand, helpMarkdown, slashItems, type PaletteItem } from "../claude/commands";
+import { FileViewer } from "../claude/FileViewer";
 import { FolderPicker, type FolderChoice } from "../claude/FolderPicker";
 import { formatCost, formatModelBadge, formatTokens, shortPath } from "../claude/format";
 import { legacyTextToParts, partsToText } from "../claude/markdown";
 import { MemoryModal } from "../claude/MemoryModal";
 import { ModelLivePanel } from "../claude/ModelLivePanel";
 import { MessageParts, NoticeRow } from "../claude/MessageView";
+import { FileContext } from "../claude/openFile";
+import { PromptCard } from "../claude/PromptCard";
 import { Sidebar, type SessionSource, type UnifiedSession } from "../claude/Sidebar";
 import { PlanLimitsChip, usePlanLimits } from "../claude/PlanLimits";
 import { UsageHistoryModal, mergeUsage, type UsagePeriod, type UsageResponse } from "../claude/Usage";
 import { EMPTY_USAGE, UsageBar, addUsage, toUsage } from "../claude/UsageBar";
 import {
   EFFORT_LEVELS, PERMISSION_MODES,
-  type Capabilities, type ChatMsg, type InitInfo, type Part, type PermissionMode, type SessionUsage, type TurnUsage,
+  type Capabilities, type ChatMsg, type InitInfo, type Part, type PermissionMode, type PromptAnswer, type PromptRequest,
+  type SessionUsage, type TurnUsage,
 } from "../claude/types";
 
 // ---------------------------------------------------------------------------
@@ -66,15 +69,18 @@ interface HistoryEvent {
 
 interface RouterDetail { id: string; model?: string; messages: { role: "user" | "assistant"; text: string }[] }
 
-const MODE_INFO: Record<PermissionMode, { label: string; icon: string; cls: string }> = {
-  bypassPermissions: { label: "bypass permissions", icon: "⏵⏵", cls: "text-bad" },
-  acceptEdits: { label: "accept edits", icon: "⏵⏵", cls: "text-accent" },
-  plan: { label: "plan mode", icon: "⏸", cls: "text-warn" },
+const MODE_INFO: Record<PermissionMode, { label: string; chip: string; icon: string; cls: string }> = {
+  default: { label: "ask permissions", chip: "ask permissions", icon: "⏵", cls: "text-fg-2" },
+  acceptEdits: { label: "accept edits", chip: "accept edits on", icon: "⏵⏵", cls: "text-accent" },
+  plan: { label: "plan mode", chip: "plan mode on", icon: "⏸", cls: "text-warn" },
+  bypassPermissions: { label: "bypass permissions", chip: "bypass permissions on", icon: "⏵⏵", cls: "text-bad" },
 };
 const MODE_ARGS: Record<string, PermissionMode> = {
+  ask: "default", default: "default", manual: "default", normal: "default",
   bypass: "bypassPermissions", bypasspermissions: "bypassPermissions", yolo: "bypassPermissions",
   edits: "acceptEdits", acceptedits: "acceptEdits", accept: "acceptEdits", plan: "plan",
 };
+const isMode = (value: unknown): value is PermissionMode => PERMISSION_MODES.includes(value as PermissionMode);
 
 let _mid = 0;
 const uid = () => `m${++_mid}`;
@@ -145,8 +151,8 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   const [selectedModel, setSelectedModel] = useState<string>(() => load(MODEL_KEY) || "default");
   const [selectedProvider, setSelectedProvider] = useState<string | null>(() => load(PROVIDER_KEY));
   const [mode, setModeState] = useState<PermissionMode>(() => {
-    const saved = load(MODE_KEY) as PermissionMode | null;
-    return saved && PERMISSION_MODES.includes(saved) ? saved : "bypassPermissions";
+    const saved = load(MODE_KEY);
+    return isMode(saved) ? saved : "bypassPermissions";
   });
   const [effort, setEffortState] = useState<string>(() => load(EFFORT_KEY) || "");
   const modeBeforePlanRef = useRef<PermissionMode>("bypassPermissions");
@@ -180,7 +186,8 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   const bindingReadyRef = useRef(!sessionId);
   const [bindingError, setBindingError] = useState<string | null>(null);
   // After asking for another session, drop events until its history arrives (they belong to the old one).
-  const resyncRef = useRef<{ target: string | null; waiting: boolean }>({ target: sessionId, waiting: true });
+  // waiting: until the history of `target` arrives; replaying: its running turn's past events, until "attached".
+  const resyncRef = useRef<{ target: string | null; waiting: boolean; replaying?: boolean }>({ target: sessionId, waiting: true });
 
   // Composer
   const [input, setInput] = useState("");
@@ -192,6 +199,10 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   const [filesLoading, setFilesLoading] = useState(false);
   const [memoryNote, setMemoryNote] = useState<string | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  // File viewer: the file or folder it opened at (absolute, ~ or relative to the chat folder).
+  const [filesAt, setFilesAt] = useState<string | null>(null);
+  const closeFiles = useCallback(() => setFilesAt(null), []);
+  useEffect(() => { if (!active) setFilesAt(null); }, [active]);
   const [bashRunning, setBashRunning] = useState(false);
   // Like the terminal: a prompt sent while a turn runs waits and goes out when it ends.
   const [queued, setQueued] = useState<string | null>(null);
@@ -206,6 +217,8 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   connStateRef.current = connState;
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
   const [activity, setActivity] = useState<string | null>(null);
+  // What the CLI is waiting on: a permission, AskUserQuestion or a plan (oldest first, one dialog at a time).
+  const [asks, setAsks] = useState<PromptRequest[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -379,6 +392,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
     const id = liveIdRef.current;
     liveIdRef.current = null;
     setActivity(null);
+    setAsks([]);
     if (!id) return;
     setMessages((prev) => prev.flatMap((m) => {
       if (m.id !== id) return [m];
@@ -395,6 +409,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
     const converted: ChatMsg[] = h.messages.map((m) => ({ id: uid(), role: m.role, parts: m.parts, model: m.model }));
     liveIdRef.current = null;
     setMessages(converted);
+    setAsks([]);  // a running turn's open prompts follow in its replay
     setHistoryTitle(h.title || null);
     setTurnUsages(new Map());
     setSessionUsage(toUsage(h.usage));
@@ -429,12 +444,14 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
     if (type === "history") {
       if (obj.session_id !== resync.target) return;
       resync.waiting = false;
+      resync.replaying = true;
       applyHistory(obj as unknown as HistoryEvent);
       return;
     }
     if (type === "attached") {
       if ((obj.session_id ?? null) !== resync.target) return;
       resync.waiting = false;
+      resync.replaying = false;
       bindingReadyRef.current = true;
       setBindingReady(true);
       if (!obj.running) { finishTurn(); setConnState("idle"); }
@@ -479,8 +496,19 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
         if (typeof obj.locked === "boolean") setLockedState(obj.locked);
         return;
       }
+      case "prompt": {
+        const ask = obj as unknown as PromptRequest;
+        setAsks((prev) => (prev.some((a) => a.request_id === ask.request_id) ? prev : [...prev, ask]));
+        return;
+      }
+      case "prompt_done":
+        setAsks((prev) => prev.filter((a) => a.request_id !== obj.request_id));
+        return;
       case "system": {
         const sub = obj.subtype as string;
+        // The CLI switched mode mid-turn (a plan approved, "allow all edits", EnterPlanMode): later turns keep it.
+        // Not from a replay: the switch already happened here, and the mode may have been changed since.
+        if (sub === "status" && isMode(obj.permissionMode) && !resync.replaying) setMode(obj.permissionMode);
         if (sub === "init") {
           setInitInfo(obj as InitInfo);
           const sid = obj.session_id as string | undefined;
@@ -559,7 +587,9 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
             if (idx >= 0) {
               const next = [...prev];
               const parts = [...next[i].parts];
-              parts[idx] = { ...(parts[idx] as Extract<Part, { kind: "tool" }>), output: String(obj.output ?? ""), is_error: Boolean(obj.is_error), done: true };
+              const tool = parts[idx] as Extract<Part, { kind: "tool" }>;
+              parts[idx] = { ...tool, output: String(obj.output ?? ""), is_error: Boolean(obj.is_error), done: true,
+                answers: (obj.answers as Record<string, string> | undefined) ?? tool.answers };
               next[i] = { ...next[i], parts };
               return next;
             }
@@ -579,7 +609,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
           extra.push({ kind: "notice", level: "error", text: `Turn ended: ${String(obj.subtype).replace(/_/g, " ")}` });
         }
         if (extra.length) patchLive((m) => ({ ...m, parts: [...m.parts, ...extra] }));
-        void refreshLimits(); // after an official turn the server asks Claude Code for the scoped rows too
+        void refreshLimits(); // the server's shared reading; a turn's own numbers arrive as plan_limits
         return;
       }
       case "turn_usage": {
@@ -603,7 +633,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
         return;
       }
     }
-  }, [acceptLimits, applyHistory, finishTurn, notice, patchLive, refreshLimits, refreshLists, setSessionId]);
+  }, [acceptLimits, applyHistory, finishTurn, notice, patchLive, refreshLimits, refreshLists, setMode, setSessionId]);
 
   const handleRef = useRef(handleEvent);
   handleRef.current = handleEvent;
@@ -655,6 +685,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
     setSessionFolder(null);
     setHistoryTitle(null);
     setActivity(null);
+    setAsks([]);
     setBashRunning(false);
   }, []);
 
@@ -822,6 +853,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
     + sessionUsage.cache_read_input_tokens + sessionUsage.cache_creation_input_tokens;
   const home = caps?.home ?? null;
   const folderPath = folder ?? home ?? "~";
+  const fileAccess = useMemo(() => ({ open: setFilesAt, cwd: folder ?? home }), [folder, home]);
 
   const statusMarkdown = useCallback(() => {
     const native = caps?.models.find((m) => m.value === selectedModel);
@@ -851,7 +883,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
         const native = caps?.models.find((m) => m.value.toLowerCase() === q || m.display_name.toLowerCase() === q);
         const custom = agentModels.find((m) => m.id.toLowerCase() === q)
           ?? agentModels.find((m) => m.id.toLowerCase().includes(q) || (m.name ?? "").toLowerCase().includes(q));
-        const pick: ModelSelection | null = native ? { model: native.value, provider_id: null }
+        const pick: ModelSelection | null = native ? (native.route ?? { model: native.value, provider_id: null })
           : custom ? { model: custom.id, provider_id: custom.provider_id }
           : q.startsWith("claude-") ? { model: args, provider_id: null } : null;
         if (!pick) { notice(`No model matches “${args}”. Type /model to browse.`, "error"); return; }
@@ -878,7 +910,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
         return;
       case "permissions": {
         const next = args ? MODE_ARGS[args.toLowerCase().replace(/[^a-z]/g, "")] : PERMISSION_MODES[(PERMISSION_MODES.indexOf(mode) + 1) % PERMISSION_MODES.length];
-        if (!next) { notice("Use /permissions bypass, edits or plan.", "error"); return; }
+        if (!next) { notice("Use /permissions ask, edits, plan or bypass.", "error"); return; }
         setMode(next);
         notice(`Permission mode: ${MODE_INFO[next].label}.`);
         return;
@@ -889,11 +921,12 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
         setTimeout(() => searchRef.current?.focus(), 80);
         return;
       case "memory": setMemoryOpen(true); return;
+      case "files": setFilesAt(args || folderPath); return;
       case "status": appendLocal(typed, statusMarkdown()); return;
       case "export": exportConversation(); return;
       case "help": appendLocal(typed, helpMarkdown(caps)); return;
     }
-  }, [agentModels, appendLocal, caps, clearComposer, exportConversation, mode, modelProviders, newChat, notice, selectModel, sendTurn, setEffort, setMode, statusMarkdown]);
+  }, [agentModels, appendLocal, caps, clearComposer, exportConversation, folderPath, mode, modelProviders, newChat, notice, selectModel, sendTurn, setEffort, setMode, statusMarkdown]);
 
   const submit = useCallback((raw?: string) => {
     const text = (raw ?? input).trim();
@@ -994,11 +1027,16 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   const recentFolders = useMemo(() => [...new Set([newFolder, ...claudeSessions.map((s) => s.cwd)]
     .filter((f): f is string => Boolean(f) && f !== home))], [claudeSessions, home, newFolder]);
 
-  const approvePlan = useCallback(() => {
-    const next = modeBeforePlanRef.current === "plan" ? "bypassPermissions" : modeBeforePlanRef.current;
-    setMode(next);
-    if (canTalk()) sendTurn("The plan is approved. Go ahead and implement it.", { mode: next });
-  }, [sendTurn, setMode]);
+  // The user's pick in Claude Code's dialog goes back to the CLI, which is still in the same turn.
+  const answerPrompt = useCallback((ask: PromptRequest, answer: PromptAnswer) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "answer", request_id: ask.request_id, ...answer }));
+    setAsks((prev) => prev.filter((a) => a.request_id !== ask.request_id));
+    // A plan approved or "allow all edits" switches the mode; show it now, the CLI confirms it.
+    const next = answer.behavior === "allow" ? answer.permissions?.find((p) => p.type === "setMode")?.mode : undefined;
+    if (isMode(next)) setMode(next);
+  }, [setMode]);
 
   // -------------------------------------------------------------------------
   // Composer: palette for / and @, keys, images
@@ -1133,12 +1171,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   const usageData = mergeUsage(claudeUsage, routerUsage);
   const activeSession = unifiedSessions.find((s) => s.id === sessionId);
   const chatTitle = historyTitle ?? activeSession?.title ?? (sessionId ? `Session ${sessionId.slice(0, 8)}…` : "New Chat");
-  const lastMsg = messages[messages.length - 1];
-  const lastAssistantText = !busy && lastMsg?.role === "assistant" && !lastMsg.local
-    ? lastMsg.parts.filter((p) => p.kind === "text").map((p) => (p as { text: string }).text).join("\n") : undefined;
-  const lastPlanMsgId = mode === "plan" && !busy
-    ? [...messages].reverse().find((m) => m.role === "assistant" && m.parts.some((p) => p.kind === "tool" && p.name === "ExitPlanMode"))?.id
-    : undefined;
+  const waiting = running && asks.length > 0;
   const composerMode = input.startsWith("!") ? "bash" : input.startsWith("#") ? "memory" : null;
   const canSend = bindingReady && !isArchived && !bashRunning && (connState === "idle" || connState === "thinking") && (input.trim().length > 0 || images.length > 0);
 
@@ -1154,7 +1187,9 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
   const pickedNative = caps?.models.find((m) => m.value === selectedModel);
 
   return (
+    <FileContext.Provider value={fileAccess}>
     <div className="relative flex h-full w-full overflow-hidden" style={{ display: active ? undefined : "none" }}>
+      {filesAt != null && <FileViewer start={filesAt} cwd={folder ?? home} home={home} onClose={closeFiles} />}
       {historyModalOpen && usageData && <UsageHistoryModal usage={usageData} onClose={() => setHistoryModalOpen(false)} />}
       {memoryOpen && <MemoryModal cwd={folder} onClose={() => setMemoryOpen(false)} onSaved={(path) => notice(`Saved ${path}`)} />}
       {folderOpen && home && (
@@ -1292,11 +1327,11 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
                         msg.role === "user" ? "rounded-tr-sm bg-accent/15 text-fg" : "rounded-tl-sm border border-line bg-surface text-fg"}`}>
                         {msg.role === "user" && msg.parts.length === 1 && msg.parts[0].kind === "text"
                           ? <p className="whitespace-pre-wrap break-words text-sm">{msg.parts[0].text}</p>
-                          : <MessageParts msg={msg} onApprovePlan={msg.id === lastPlanMsgId ? approvePlan : undefined} />}
+                          : <MessageParts msg={msg} settled={!(isLive && running)} />}
                         {isLive && running && (
                           <div className={`flex items-center gap-2 text-xs text-accent ${empty ? "" : "border-t border-line/40 pt-2"}`}>
                             <RunningDot />
-                            <span className="font-medium">✻ {activity ?? (msg.streaming ? "Writing" : "Working")}…</span>
+                            <span className="font-medium">✻ {waiting ? "Waiting for your answer" : activity ?? (msg.streaming ? "Writing" : "Working")}…</span>
                             <span className="text-muted"><Elapsed since={turnStartedAt} /> · esc to interrupt</span>
                           </div>
                         )}
@@ -1347,7 +1382,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
             <div className="mb-2 flex items-center justify-between rounded-xl border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs text-accent">
               <div className="flex min-w-0 items-center gap-2 font-medium">
                 <RunningDot />
-                <span className="truncate">{bashRunning ? "Running bash command" : "Claude Code is working"} · keeps running if you leave this page</span>
+                <span className="truncate">{bashRunning ? "Running bash command" : waiting ? "Claude Code is waiting for your answer" : "Claude Code is working"} · keeps running if you leave this page</span>
               </div>
               <button type="button" onClick={interrupt} title="Stop (Esc)"
                 className="shrink-0 flex items-center gap-1 rounded-md bg-bad/20 hover:bg-bad/30 text-bad px-2 py-0.5 font-medium text-[11px]">
@@ -1385,8 +1420,10 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
             </div>
           )}
 
-          <FeedbackSuggestions lastMessageText={lastAssistantText} disabled={busy || isArchived || !bindingReady}
-            onSelect={(suggestion) => submit(suggestion)} />
+          {asks[0] && !isArchived && (
+            <PromptCard key={asks[0].request_id} prompt={asks[0]} more={asks.length - 1} cwd={folderPath} home={home}
+              planReturn={modeBeforePlanRef.current} onAnswer={answerPrompt} />
+          )}
 
           <div className="agent-composer relative flex items-end gap-1.5 sm:gap-2">
             <CommandPalette
@@ -1447,7 +1484,8 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
                 const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
                 if (files.length) { e.preventDefault(); addImageFiles(files); }
               }}
-              placeholder={isArchived ? "Archived conversation" : running ? "Claude Code is working… type to queue a message, Esc to stop" : "Message Claude Code…  / commands · @ files · ! bash · # memory"}
+              placeholder={isArchived ? "Archived conversation" : waiting ? "Answer Claude above… or type to queue a message, Esc to stop"
+                : running ? "Claude Code is working… type to queue a message, Esc to stop" : "Message Claude Code…  / commands · @ files · ! bash · # memory"}
               rows={1}
               className={`flex-1 resize-none rounded-xl border bg-surface px-3 py-2 text-sm text-fg placeholder:text-muted focus:outline-none ${
                 composerMode === "bash" ? "border-warn font-mono focus:border-warn" : composerMode === "memory" ? "border-accent/70 focus:border-accent" : "border-line focus:border-accent"}`}
@@ -1470,7 +1508,7 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
           {!isArchived && (
             <div className="agent-statusline">
               <button type="button" onClick={cycleMode} title="Permission mode (Shift+Tab)" className={`agent-mode-chip ${MODE_INFO[mode].cls}`}>
-                <span aria-hidden>{MODE_INFO[mode].icon}</span> {MODE_INFO[mode].label} on
+                <span aria-hidden>{MODE_INFO[mode].icon}</span> {MODE_INFO[mode].chip}
                 <span className="hidden text-muted sm:inline"> (shift+tab)</span>
               </button>
               <label className="agent-effort">
@@ -1485,6 +1523,11 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
                   aria-label={`Folder ${folderPath}. Change folder`} className="agent-folder-path">
                   <Folder size={12} aria-hidden className="shrink-0" />
                   <span className="truncate">{shortPath(folderPath, home)}</span>
+                </button>
+                <button type="button" onClick={() => setFilesAt(folderPath)} title="Browse and preview files in this folder"
+                  aria-label="Browse files" className="agent-folder-lock">
+                  <FolderSearch size={12} aria-hidden />
+                  <span className="hidden sm:inline">files</span>
                 </button>
                 <button type="button" onClick={toggleLock} aria-pressed={locked}
                   title={locked ? "Locked: Claude can only change files in this folder. Click to unlock" : "Unlocked: Claude can change files anywhere. Click to lock to this folder"}
@@ -1518,5 +1561,6 @@ export function Claude({ active, onRunningChange }: { active: boolean; onRunning
         </>
       )}
     </div>
+    </FileContext.Provider>
   );
 }

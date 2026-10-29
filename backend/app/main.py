@@ -403,6 +403,65 @@ async def claude_files(request: Request, q: str = "", cwd: str = ""):
     return await _threaded(claude_workspace.search_files, q[:300], 40, folder)
 
 
+def _preview_root(cwd: str):
+    """Relative paths resolve against the chat's folder; a folder that's gone still lets absolute ones open."""
+    try:
+        return claude_workspace.folder(cwd or None)
+    except (ValueError, RuntimeError):
+        return None
+
+
+async def _preview(request: Request, fn, path: str, cwd: str):
+    """File viewer reads. <img>, <script> and prefetch send no Origin, so also refuse what the browser marks
+    cross-site: a sibling *.lufria.tech page must not make the server open files."""
+    _same_origin(request)
+    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+        raise HTTPException(403, "cross-site request refused")
+    try:
+        return await _threaded(fn, path, await _threaded(_preview_root, cwd))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.get("/api/claude/dir")
+async def claude_dir(request: Request, path: str = "", cwd: str = ""):
+    return await _preview(request, claude_workspace.list_dir, path, cwd)
+
+
+@app.get("/api/claude/file")
+async def claude_file(request: Request, path: str, cwd: str = ""):
+    return await _preview(request, claude_workspace.read_preview, path, cwd)
+
+
+@app.get("/api/claude/file/raw")
+async def claude_file_raw(request: Request, path: str, cwd: str = "", download: bool = False, v: str = ""):
+    """A file's bytes: images, video and audio inline for the viewer and chat attachments, anything as a
+    download. FileResponse answers Range requests, which video seeking (and Safari playback) needs.
+    `v`: the file's mtime in the URL, so the browser may keep it (a changed file gets a new URL)."""
+    p, mime, st = await _preview(request, lambda path, root: claude_workspace.raw_file(path, root, download), path, cwd)
+    # An SVG (or anything) opened directly must not run scripts on this origin.
+    return FileResponse(p, media_type=mime, stat_result=st, filename=p.name if download else None, headers={
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=86400" if v and not download else "no-store"})
+
+
+@app.post("/api/claude/file/stat")
+async def claude_file_stat(request: Request):
+    """Which paths in a reply are existing files: the chat shows those as attachments."""
+    _same_origin(request)
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Invalid JSON") from None
+    paths = body.get("paths") if isinstance(body, dict) else None
+    if not isinstance(paths, list) or not all(isinstance(x, str) for x in paths):
+        raise HTTPException(400, "paths must be a list of strings")
+    cwd = str(body.get("cwd") or "")
+    root = await _threaded(_preview_root, cwd)
+    return await _threaded(claude_workspace.stat_files, paths, root, root is not None or not cwd)
+
+
 @app.get("/api/claude/memory")
 async def claude_memory(request: Request, cwd: str = ""):
     _same_origin(request)

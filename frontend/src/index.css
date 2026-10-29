@@ -340,6 +340,65 @@ body.is-resizing-nav {
   border: 1px solid var(--color-line); border-radius: 0.5rem; background: var(--color-surface);
 }
 
+/* Claude Code's dialogs above the composer: a tool permission, AskUserQuestion, plan approval.
+   Like the terminal: a bordered box, ❯ on the marked row, numbered options. */
+.cc-prompt {
+  --cc-color: var(--color-accent);
+  position: relative; margin-bottom: 0.5rem; max-height: 62dvh; overflow-y: auto; padding: 0.65rem 0.8rem 0.55rem;
+  border: 1px solid var(--color-line-strong); border-top: 2px solid var(--cc-color); border-radius: 0.6rem;
+  background: var(--color-surface); font-size: 13px; color: var(--color-fg-2);
+}
+.cc-prompt.is-plan { --cc-color: var(--color-warn); }
+.cc-prompt-title { margin: 0 0 0.35rem; font-weight: 600; color: var(--cc-color); }
+.cc-prompt-question { margin: 0.55rem 0 0.15rem; color: var(--color-fg); }
+.cc-prompt-note { margin: 0.2rem 0 0; font-size: 12px; color: var(--color-muted); }
+.cc-prompt-warn { margin: 0.35rem 0 0; font-size: 12px; color: var(--color-warn); white-space: pre-wrap; }
+.cc-prompt-path { margin: 0 0 0.3rem; font-family: var(--font-mono); font-size: 12px; color: var(--color-fg-2); overflow-wrap: anywhere; }
+.cc-prompt-code {
+  margin: 0; max-height: 30dvh; overflow: auto; padding: 0.45rem 0.6rem; border: 1px solid var(--color-line); border-radius: 0.4rem;
+  background: #0b0f17; font-family: var(--font-mono); font-size: 12px; line-height: 1.45; color: #e2e8f0;
+  white-space: pre-wrap; word-break: break-word;
+}
+.cc-prompt-plan {
+  max-height: 38dvh; overflow: auto; margin-top: 0.3rem; padding: 0.55rem 0.7rem;
+  border: 1px solid rgb(245 158 11 / 0.35); border-radius: 0.45rem; background: rgb(245 158 11 / 0.05);
+}
+.cc-prompt-hint { margin: 0.45rem 0 0; font-size: 11px; color: var(--color-muted); }
+.cc-prompt-more { position: absolute; top: 0.55rem; right: 0.75rem; font-size: 11px; color: var(--color-muted); }
+.cc-select { display: grid; gap: 1px; margin-top: 0.3rem; border-radius: 0.4rem; outline: none; }
+.cc-select:focus-visible { outline: 1px solid color-mix(in srgb, var(--cc-color) 45%, transparent); outline-offset: 3px; }
+.cc-option {
+  display: flex; align-items: flex-start; gap: 0.4rem; min-height: 30px; padding: 0.25rem 0.4rem; border-radius: 0.4rem;
+  color: var(--color-fg-2); cursor: pointer;
+}
+.cc-option:hover { background: var(--color-surface-2); }
+.cc-option.is-focused { color: var(--cc-color); background: color-mix(in srgb, var(--cc-color) 9%, transparent); }
+.cc-option.is-apart:not(.is-apart + .is-apart) { margin-top: 0.3rem; border-top: 1px solid var(--color-line); border-radius: 0 0 0.4rem 0.4rem; padding-top: 0.45rem; }
+.cc-option-pointer { width: 1ch; flex-shrink: 0; font-family: var(--font-mono); }
+.cc-option-num { flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; color: var(--color-muted); }
+.cc-option.is-focused .cc-option-num { color: inherit; }
+.cc-option-check { flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; }
+.cc-option-body { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.cc-option-label { overflow-wrap: anywhere; }
+.cc-option-line { display: flex; min-width: 0; align-items: baseline; gap: 0.35rem; }
+.cc-option-line input { min-width: 0; flex: 1; border: 0; background: transparent; color: var(--color-fg); font: inherit; outline: none; }
+.cc-option-line input::placeholder { color: inherit; opacity: 0.85; }
+.cc-option-desc { font-size: 12px; color: var(--color-muted); overflow-wrap: anywhere; }
+.cc-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin-bottom: 0.45rem; font-size: 12px; }
+.cc-tab { padding: 0.05rem 0.45rem; border-radius: 0.3rem; color: var(--color-fg-2); }
+button.cc-tab { cursor: pointer; }
+button.cc-tab:hover { background: var(--color-surface-2); }
+.cc-tab.is-current { background: var(--cc-color); color: var(--color-bg); font-weight: 600; }
+.cc-review { display: grid; gap: 0.2rem; margin: 0.2rem 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
+/* The answered question in the conversation, as the terminal records it */
+.cc-asked { font-size: 0.8rem; color: var(--color-fg-2); }
+.cc-asked-head { display: flex; align-items: center; gap: 0.35rem; margin: 0 0 0.2rem; color: var(--color-fg); font-weight: 500; }
+.cc-asked ul { display: grid; gap: 0.15rem; margin: 0; padding: 0 0 0 0.8rem; list-style: none; overflow-wrap: anywhere; }
+@media (pointer: coarse) {
+  .cc-option { min-height: 44px; align-items: center; }
+  .cc-tab { min-height: 32px; display: inline-flex; align-items: center; }
+}
+
 /* Prompt status line: permission mode (Shift+Tab) and effort */
 .agent-statusline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; min-width: 0; margin-top: 0.35rem; font-size: 11px; }
 .agent-mode-chip {
@@ -524,6 +583,55 @@ body.is-resizing-nav {
 
 @media (pointer: coarse) {
   .tool-call summary { min-height: 44px; }
+}
+
+/* Preview button over a tool call that touched a file (outside <summary>, at the row's right end) */
+/* The wrapper carries the card's margin so the button lines up whether or not margins collapse. */
+.tool-call-wrap { position: relative; margin: 0.4rem 0; }
+.tool-call-wrap > .tool-call { margin: 0; }
+.tool-call-wrap.has-open > .tool-call > summary { padding-right: 2.4rem; }
+.tool-call-open {
+  position: absolute; top: 5px; right: 5px; display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 6px; color: var(--color-muted);
+}
+.tool-call-open:hover { background: var(--color-line); color: var(--color-fg); }
+@media (pointer: coarse) {
+  .tool-call-wrap.has-open > .tool-call > summary { padding-right: 2.9rem; }
+  .tool-call-open { top: 4px; width: 36px; height: 36px; }
+}
+
+/* Inline code in a reply that names a file: opens the file viewer */
+.md-path { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.md-path:hover, .md-path:focus-visible { color: var(--color-fg); background: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface-2)); }
+
+/* Files a reply handed over: media inline, every file downloadable */
+.chat-attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+.chat-attachment {
+  display: flex; flex-direction: column; overflow: hidden; margin: 0; width: 100%; max-width: 22rem;
+  border: 1px solid var(--color-line); border-radius: 0.6rem; background: var(--color-surface);
+}
+.chat-attachment.is-video { max-width: 30rem; }
+.chat-attachment-media { display: block; width: 100%; max-height: 20rem; background: #000; object-fit: contain; }
+.chat-attachment-media img { display: block; width: 100%; max-height: 20rem; object-fit: contain; }
+.chat-attachment-bar { display: flex; min-height: 40px; align-items: center; gap: 0.5rem; padding: 0.15rem 0.25rem 0.15rem 0.6rem; }
+.chat-attachment.is-audio audio { margin: 0.5rem 0.5rem 0; width: calc(100% - 1rem); }
+
+/* File viewer: line-numbered source */
+.file-code {
+  margin: 0; padding: 0.6rem 0; counter-reset: line; font-family: var(--font-mono); font-size: 0.76rem;
+  line-height: 1.5; color: var(--color-fg-2); white-space: pre; tab-size: 4;
+}
+.file-code.is-wrapped { white-space: pre-wrap; overflow-wrap: anywhere; }
+.file-line { display: block; position: relative; padding: 0 1rem 0 4.25rem; min-height: 1.5em; }
+.file-line::before {
+  counter-increment: line; content: counter(line); position: absolute; left: 0; width: 3.25rem;
+  padding-right: 0.5rem; text-align: right; color: var(--color-muted); opacity: 0.6; user-select: none;
+}
+.file-line:hover { background: var(--color-surface); }
+.file-image-wrap {
+  display: flex; height: 100%; min-height: 12rem; align-items: center; justify-content: center; padding: 1rem;
+  background-image: conic-gradient(var(--color-surface) 25%, var(--color-bg) 0 50%, var(--color-surface) 0 75%, var(--color-bg) 0);
+  background-size: 20px 20px;
 }
 
 /* Claude two-panel layout */

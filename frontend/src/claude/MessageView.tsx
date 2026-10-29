@@ -1,64 +1,119 @@
-import { Check, CheckCircle2, Circle, CircleDot, Image as ImageIcon, Loader, X } from "lucide-react";
-import { memo } from "react";
+import { Check, CheckCircle2, Circle, CircleDot, FileSearch, Image as ImageIcon, Loader, X } from "lucide-react";
+import { memo, useContext, useMemo, type KeyboardEvent, type MouseEvent } from "react";
+import { Attachments } from "./Attachments";
 import { renderMarkdown } from "./markdown";
+import { FileContext } from "./openFile";
+import { attachmentPaths } from "./paths";
 import type { ChatMsg, Part } from "./types";
 
-function Markdown({ text, error }: { text: string; error?: boolean }) {
-  return <div className={`md-body text-sm leading-relaxed${error ? " text-bad" : ""}`} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+type ToolPart = Extract<Part, { kind: "tool" }>;
+
+/** The tool result Claude Code writes when the user picks "No" (or Esc) in its dialog. */
+const REJECTED = "The user doesn't want to proceed with this tool use";
+const rejected = (part: ToolPart) => part.is_error && part.output.startsWith(REJECTED);
+/** What the user typed after "No", if anything. */
+const rejectionNote = (part: ToolPart) => (rejected(part) ? part.output.split("the user said:\n")[1]?.trim() : undefined);
+
+export function Markdown({ text, error }: { text: string; error?: boolean }) {
+  const files = useContext(FileContext);
+  // Inline code naming a file is rendered with data-path (markdown.ts); open it in the file viewer.
+  const openPath = (e: MouseEvent | KeyboardEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-path]");
+    if (!el?.dataset.path || !files) return;
+    if (e.type === "click" && !window.getSelection()?.isCollapsed) return;  // selecting the path to copy it
+    e.preventDefault();
+    files.open(el.dataset.path);
+  };
+  return <div className={`md-body text-sm leading-relaxed${error ? " text-bad" : ""}`}
+    onClick={files ? openPath : undefined}
+    onKeyDown={files ? (e) => { if (e.key === "Enter" || e.key === " ") openPath(e); } : undefined}
+    dangerouslySetInnerHTML={{ __html: renderMarkdown(text, { paths: Boolean(files) }) }} />;
 }
 
-function ToolCard({ part, onApprovePlan }: { part: Extract<Part, { kind: "tool" }>; onApprovePlan?: () => void }) {
+/** AskUserQuestion in the conversation, as the terminal records it once the dialog is gone. */
+function QuestionsCard({ part }: { part: ToolPart }) {
+  const questions = part.questions ?? [];
+  const answers = Object.entries(part.answers ?? {});
+  let head = "Claude is asking you…";
+  if (part.done && part.is_error) {
+    head = part.output.startsWith("The user wants to clarify") ? "User chose to chat about Claude's questions" : "User declined to answer questions";
+  } else if (part.done) head = "User answered Claude's questions:";
+  return (
+    <div className="cc-asked">
+      <p className="cc-asked-head">{!part.done && <Loader size={11} className="animate-spin" />}{head}</p>
+      <ul>
+        {part.done && !part.is_error && answers.length
+          ? answers.map(([q, a]) => <li key={q}>· {q} → <span className="text-fg">{a}</span></li>)
+          : questions.map((q) => <li key={q.question}>· {q.question} <span className="text-muted">({q.options.map((o) => o.label).join(" / ")})</span></li>)}
+      </ul>
+      {part.done && !part.is_error && !answers.length && part.output && <p className="text-muted">{part.output}</p>}
+    </div>
+  );
+}
+
+function ToolCard({ part }: { part: ToolPart }) {
+  const openFile = useContext(FileContext)?.open;
   const status = !part.done
-    ? <span className="tool-call-badge-running"><Loader size={11} className="animate-spin" /> running</span>
-    : part.is_error
-      ? <span className="tool-call-badge-error"><X size={11} /> {part.name === "ExitPlanMode" ? "awaiting approval" : "error"}</span>
-      : <span className="tool-call-badge-done"><Check size={11} /> done</span>;
+    ? <span className="tool-call-badge-running"><Loader size={11} className="animate-spin" /> {part.name === "ExitPlanMode" ? "awaiting approval" : "running"}</span>
+    : rejected(part)
+      ? <span className="tool-call-badge-error"><X size={11} /> rejected</span>
+      : part.is_error
+        ? <span className="tool-call-badge-error"><X size={11} /> error</span>
+        : <span className="tool-call-badge-done"><Check size={11} /> {part.name === "ExitPlanMode" ? "approved" : "done"}</span>;
+  if (part.name === "AskUserQuestion" && part.questions?.length) return <QuestionsCard part={part} />;
   if (part.name === "ExitPlanMode" && part.plan) {
+    const note = rejectionNote(part);
     return (
       <div className="plan-card">
         <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold text-fg">
           <span>Plan</span>{status}
         </div>
         <Markdown text={part.plan} />
-        {onApprovePlan && (
-          <button type="button" onClick={onApprovePlan} className="mt-3 inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-bg hover:bg-accent/85">
-            <Check size={14} /> Approve plan and run
-          </button>
-        )}
+        {note && <p className="mt-2 text-xs text-muted">Your feedback: <span className="text-fg-2">{note}</span></p>}
       </div>
     );
   }
+  // The preview button sits over the row, not inside <summary>: a button inside a button isn't reliable.
+  const preview = openFile && part.path ? part.path : null;
   return (
-    <details className={`tool-call${part.is_error ? " is-error" : ""}`}>
-      <summary>
-        <span className="tool-call-left">
-          <span className="tool-call-arrow" aria-hidden="true">▶</span>
-          <span className="tool-call-name">{part.name}</span>
-          <code className="tool-call-cmd" title={part.summary}>{part.summary}</code>
-        </span>
-        {status}
-      </summary>
-      <div className="tool-call-body">
-        {part.todos && (
-          <ul className="todo-list">
-            {part.todos.map((t, i) => (
-              <li key={i} className={t.status === "completed" ? "is-done" : ""}>
-                {t.status === "completed" ? <CheckCircle2 size={13} className="text-good" /> : t.status === "in_progress" ? <CircleDot size={13} className="text-accent" /> : <Circle size={13} className="text-muted" />}
-                <span>{t.content}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {part.diff && (
-          <pre className="tool-diff"><code>{part.diff.split("\n").map((l, i) => (
-            <span key={i} className={l.startsWith("+ ") ? "diff-add" : l.startsWith("- ") ? "diff-del" : ""}>{l}{"\n"}</span>
-          ))}</code></pre>
-        )}
-        {part.output.trim()
-          ? <pre><code>{part.output.trimEnd()}</code></pre>
-          : !part.todos && !part.diff && <p className="tool-empty-output">{part.done ? "No output." : "Running…"}</p>}
-      </div>
-    </details>
+    <div className={`tool-call-wrap${preview ? " has-open" : ""}`}>
+      <details className={`tool-call${part.is_error ? " is-error" : ""}`}>
+        <summary>
+          <span className="tool-call-left">
+            <span className="tool-call-arrow" aria-hidden="true">▶</span>
+            <span className="tool-call-name">{part.name}</span>
+            <code className="tool-call-cmd" title={part.summary}>{part.summary}</code>
+          </span>
+          {status}
+        </summary>
+        <div className="tool-call-body">
+          {part.todos && (
+            <ul className="todo-list">
+              {part.todos.map((t, i) => (
+                <li key={i} className={t.status === "completed" ? "is-done" : ""}>
+                  {t.status === "completed" ? <CheckCircle2 size={13} className="text-good" /> : t.status === "in_progress" ? <CircleDot size={13} className="text-accent" /> : <Circle size={13} className="text-muted" />}
+                  <span>{t.content}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {part.diff && (
+            <pre className="tool-diff"><code>{part.diff.split("\n").map((l, i) => (
+              <span key={i} className={l.startsWith("+ ") ? "diff-add" : l.startsWith("- ") ? "diff-del" : ""}>{l}{"\n"}</span>
+            ))}</code></pre>
+          )}
+          {part.output.trim()
+            ? <pre><code>{part.output.trimEnd()}</code></pre>
+            : !part.todos && !part.diff && <p className="tool-empty-output">{part.done ? "No output." : "Running…"}</p>}
+        </div>
+      </details>
+      {preview && (
+        <button type="button" className="tool-call-open" title={`Preview ${preview}`} aria-label={`Preview ${preview}`}
+          onClick={() => openFile?.(preview)}>
+          <FileSearch size={14} aria-hidden />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -78,7 +133,7 @@ function BashBlock({ part }: { part: Extract<Part, { kind: "bash" }> }) {
   );
 }
 
-export function PartView({ part, onApprovePlan }: { part: Part; onApprovePlan?: () => void }) {
+export function PartView({ part }: { part: Part }) {
   switch (part.kind) {
     case "text": return <Markdown text={part.text} error={part.is_error} />;
     case "thinking":
@@ -88,7 +143,7 @@ export function PartView({ part, onApprovePlan }: { part: Part; onApprovePlan?: 
           <div className="tool-call-body"><p className="whitespace-pre-wrap text-xs leading-relaxed text-muted">{part.text}</p></div>
         </details>
       );
-    case "tool": return <ToolCard part={part} onApprovePlan={onApprovePlan} />;
+    case "tool": return <ToolCard part={part} />;
     case "command":
       return <p className="font-mono text-sm"><span className="font-semibold text-accent">{part.name}</span>{part.args && <span className="text-fg"> {part.args}</span>}</p>;
     case "command_output":
@@ -116,12 +171,14 @@ export function NoticeRow({ part }: { part: Extract<Part, { kind: "notice" }> })
   );
 }
 
-export const MessageParts = memo(function MessageParts({ msg, onApprovePlan }: { msg: ChatMsg; onApprovePlan?: () => void }) {
-  const lastPlan = msg.parts.map((p) => p.kind === "tool" && p.name === "ExitPlanMode").lastIndexOf(true);
+/** `settled`: the turn is over (attachments are looked up then). */
+export const MessageParts = memo(function MessageParts({ msg, settled = true }: { msg: ChatMsg; settled?: boolean }) {
+  const attachments = useMemo(() => msg.role === "assistant" && !msg.local ? attachmentPaths(msg.parts) : [], [msg.local, msg.parts, msg.role]);
   return (
     <>
-      {msg.parts.map((part, i) => <PartView key={i} part={part} onApprovePlan={i === lastPlan ? onApprovePlan : undefined} />)}
+      {msg.parts.map((part, i) => <PartView key={i} part={part} />)}
       {msg.streaming && <Markdown text={msg.streaming} />}
+      {settled && attachments.length > 0 && <Attachments paths={attachments} />}
     </>
   );
 });

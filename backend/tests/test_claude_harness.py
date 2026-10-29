@@ -63,6 +63,44 @@ class FakeProcess:
         self.finish("signal")
 
 
+QUESTION = {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "toolu_1",
+            "requires_user_interaction": True,
+            "input": {"questions": [{"question": "Which color?", "header": "Color", "multiSelect": False,
+                                     "options": [{"label": "Red", "description": "warm"},
+                                                 {"label": "Blue", "description": "cool"}]}]}}
+BASH_ASK = {"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "toolu_1", "input": {"command": "rm -rf build"},
+            "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "rm -rf build"}],
+                                        "behavior": "allow", "destination": "localSettings"}]}
+ELICIT = {"type": "control_request", "request_id": "elicit-1", "request": {"subtype": "elicitation", "mcp_server_name": "x"}}
+
+
+class PromptingInput(FakeInput):
+    def write(self, data):
+        line = json.loads(data)
+        self.lines.append(line)
+        if line.get("type") == "control_request":  # interrupt: the CLI takes its question back, then stops
+            self.proc.feed({"type": "control_cancel_request", "request_id": "req-1"})
+            self.proc.finish("interrupted")
+        elif line.get("type") == "control_response" and line["response"]["request_id"] == "req-1":
+            answer = line["response"]["response"]
+            self.proc.feed({"type": "user", "tool_use_result": answer.get("updatedInput"), "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok", "is_error": answer["behavior"] == "deny"}]}})
+            self.proc.finish("success")
+
+
+class PromptingProcess(FakeProcess):
+    """Calls a tool the CLI asks the host about (control request req-1), then waits for the answer."""
+
+    def __init__(self, request, *extra):
+        super().__init__(auto_finish=False)
+        self.stdin = PromptingInput(self)
+        self.feed({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_1", "name": request["tool_name"], "input": request["input"]}]}})
+        for obj in extra:
+            self.feed(obj)
+        self.feed({"type": "control_request", "request_id": "req-1", "request": request})
+
+
 class Socket:
     """Feeds scripted client frames; waits for the predicate before each one."""
 
@@ -127,15 +165,56 @@ class PrepareTest(HarnessBase):
                 self.assertEqual(cmd[cmd.index("--model") + 1], main)
                 agents = json.loads(cmd[cmd.index("--agents") + 1])
                 self.assertEqual({name: a["model"] for name, a in agents.items()}, agents_expected)
+                self.assertIn("--disallowedTools=Agent(Explore)", cmd)
                 self.assertIsNone(secret)
                 self.assertIsNone(provider)
+
+    async def test_antigravity_combo_points_every_role_at_the_router_combo(self):
+        with patch.object(providers, "resolve_model", return_value=("https://9router.test/v1", "k", "Lufria Router")):
+            cmd, env, secret, provider = await claude_chat._prepare("AntiGravity-Tops", "lufria", None, "plan", None)
+            other = (await claude_chat._prepare("gemini-x", "lufria", None, "plan", None))[1]
+        self.assertEqual(cmd[cmd.index("--model") + 1], "AntiGravity-Tops")
+        self.assertNotIn("--agents", cmd)
+        self.assertEqual({env[k] for k in claude_chat.ROUTED_ENV}, {"AntiGravity-Tops"})
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://9router.test")
+        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", other)   # other router models are left alone
+
+    def test_antigravity_entry_is_offered_only_with_its_provider_enabled(self):
+        registry = type("R", (), {"records": [{"id": "lufria", "name": "Lufria Router", "enabled": True, "models": []}]})()
+        with patch.object(providers, "get_registry", return_value=registry):
+            [entry] = claude_chat._routes()
+        self.assertEqual(entry["route"], {"model": "AntiGravity-Tops", "provider_id": "lufria"})
+        self.assertIn("Lufria Router", entry["description"])
+        registry.records[0]["enabled"] = False
+        with patch.object(providers, "get_registry", return_value=registry):
+            self.assertEqual(claude_chat._routes(), [])
+
+    async def test_every_turn_appends_the_same_system_text(self):
+        # The CLI records the system prompt on a conversation's first request and replays it on resume, so a
+        # per-model text would stay stuck on whatever model started the chat.
+        with patch.object(providers, "resolve_model", return_value=("https://9router.test/v1", "k", "Router")):
+            texts = set()
+            for model, provider in (("opus", None), (None, None), ("official-hemat", None),
+                                    ("official-kualitas", None), ("gemini-x", "lufria")):
+                with self.subTest(model=model):
+                    cmd = (await claude_chat._prepare(model, provider, SID, "plan", None))[0]
+                    self.assertEqual(cmd.count("--append-system-prompt"), 1)
+                    texts.add(cmd[cmd.index("--append-system-prompt") + 1])
+                    self.assertEqual(cmd[-2:], ["--resume", SID])
+        [text] = texts
+        self.assertIn("scp", text)
+        self.assertIn("attachment", text)
+        for name in claude_chat.OFFICIAL_AGENTS:
+            self.assertIn(f"`{name}`", text)
 
     async def test_flags_follow_permission_mode_effort_and_native_aliases(self):
         cmd, env, secret, provider = await claude_chat._prepare("opus", None, SID, "plan", "high")
         self.assertIn("--include-partial-messages", cmd)
-        self.assertEqual(cmd[cmd.index("--permission-prompts") + 1], "none")
+        self.assertEqual(cmd[cmd.index("--permission-prompt-tool") + 1], "stdio")
+        self.assertNotIn("--permission-prompts", cmd)
         self.assertEqual(cmd[cmd.index("--permission-mode") + 1], "plan")
         self.assertNotIn("--dangerously-skip-permissions", cmd)
+        self.assertIn("--allow-dangerously-skip-permissions", cmd)  # approving the plan may switch to bypass
         self.assertEqual(cmd[cmd.index("--effort") + 1], "high")
         self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
         self.assertEqual(cmd[-2:], ["--resume", SID])
@@ -238,6 +317,136 @@ class SessionTest(HarnessBase):
         self.assertEqual(second.sent[kinds.index("turn_start")]["client_id"], "c1")
         self.assertTrue(second.sent[kinds.index("attached")]["running"])
         self.assertEqual(len(procs), 1, "a second turn must not start while one runs")
+
+    async def test_question_is_answered_from_the_page_within_the_turn(self):
+        procs = []
+
+        async def spawn(*cmd, **kwargs):
+            procs.append(PromptingProcess(QUESTION))
+            return procs[-1]
+
+        ws = Socket([
+            (None, {"type": "resume", "session_id": SID}),
+            (None, {"type": "user", "text": "pick a color"}),
+            (lambda sent: any(e.get("type") == "prompt" for e in sent),
+             {"type": "answer", "request_id": "req-1", "behavior": "allow", "answers": {"Which color?": "Blue"}}),
+            (lambda sent: any(e.get("type") == "prompt_done" for e in sent),
+             {"type": "answer", "request_id": "req-1", "behavior": "deny"}),  # a second tab, too late
+            (idle_count(1), {"type": "ping"}),
+        ])
+        with patch("app.claude_chat.asyncio.create_subprocess_exec", new=spawn):
+            await claude_chat.handle_ws(ws)
+        prompt = next(e for e in ws.sent if e.get("type") == "prompt")
+        self.assertEqual((prompt["request_id"], prompt["tool_name"], prompt["input"]),
+                         ("req-1", "AskUserQuestion", QUESTION["input"]))
+        self.assertNotIn("control_request", [e.get("type") for e in ws.sent], "the raw request stays on the server")
+        [reply] = [l for l in procs[0].stdin.lines if l.get("type") == "control_response"]
+        self.assertEqual(reply["response"], {"subtype": "success", "request_id": "req-1", "response": {
+            "behavior": "allow", "updatedInput": {**QUESTION["input"], "answers": {"Which color?": "Blue"}}}})
+        done = [e for e in ws.sent if e.get("type") == "prompt_done"]
+        self.assertEqual(done, [{"type": "prompt_done", "request_id": "req-1", "behavior": "allow"},
+                                {"type": "prompt_done", "request_id": "req-1", "cancelled": True}])
+        tool_done = next(e for e in ws.sent if e.get("type") == "tool_done")
+        self.assertEqual(tool_done["answers"], {"Which color?": "Blue"})
+
+    async def test_prompt_survives_a_reload_and_a_bad_answer_keeps_it_open(self):
+        procs = []
+
+        async def spawn(*cmd, **kwargs):
+            procs.append(PromptingProcess(BASH_ASK))
+            return procs[-1]
+
+        first = Socket([
+            (None, {"type": "resume", "session_id": SID}),
+            (None, {"type": "user", "text": "run it"}),
+            (lambda sent: any(e.get("type") == "prompt" for e in sent), {"type": "resume", "session_id": ""}),
+        ])
+        with patch("app.claude_chat.asyncio.create_subprocess_exec", new=spawn):
+            await claude_chat.handle_ws(first)
+            second = Socket([
+                (None, {"type": "resume", "session_id": SID}),
+                (lambda sent: any(e.get("type") == "attached" for e in sent),
+                 {"type": "answer", "request_id": "req-1", "behavior": "allow",
+                  "permissions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "rm -rf /"}],
+                                   "behavior": "allow", "destination": "userSettings"}]}),
+                (lambda sent: any(e.get("type") == "status" and e.get("state") == "error" for e in sent),
+                 {"type": "answer", "request_id": "req-1", "behavior": "deny", "message": "use ls instead"}),
+                (idle_count(1), {"type": "ping"}),
+            ])
+            await claude_chat.handle_ws(second)
+        kinds = [e.get("type") for e in second.sent]
+        self.assertLess(kinds.index("prompt"), kinds.index("attached"), "an open prompt is replayed on re-attach")
+        self.assertEqual(kinds[:kinds.index("attached")].count("prompt"), 1, "once, from the open prompts")
+        error_at = next(i for i, e in enumerate(second.sent) if e.get("state") == "error")
+        self.assertIn("Invalid permission update", second.sent[error_at]["msg"])
+        self.assertIn("prompt", kinds[error_at:], "a refused answer shows the prompt again")
+        [reply] = [l for l in procs[0].stdin.lines if l.get("type") == "control_response"]
+        self.assertEqual(reply["response"]["response"], {"behavior": "deny", "message": "use ls instead"})
+
+    async def test_cli_cancels_prompts_and_other_requests_are_refused(self):
+        procs = []
+
+        async def spawn(*cmd, **kwargs):
+            procs.append(PromptingProcess(QUESTION, ELICIT))
+            return procs[-1]
+
+        ws = Socket([
+            (None, {"type": "resume", "session_id": SID}),
+            (None, {"type": "user", "text": "ask me"}),
+            (lambda sent: any(e.get("type") == "prompt" for e in sent), {"type": "interrupt"}),
+            (idle_count(1), {"type": "ping"}),
+        ])
+        with patch("app.claude_chat.asyncio.create_subprocess_exec", new=spawn):
+            await claude_chat.handle_ws(ws)
+        done = [e for e in ws.sent if e.get("type") == "prompt_done"]
+        self.assertEqual(done, [{"type": "prompt_done", "request_id": "req-1", "cancelled": True}])
+        refused = [l["response"] for l in procs[0].stdin.lines if l.get("type") == "control_response"]
+        self.assertEqual([(r["subtype"], r["request_id"]) for r in refused], [("error", "elicit-1")])
+        self.assertFalse(claude_chat.RUNS)
+
+    def test_answers_are_limited_to_what_the_cli_offered(self):
+        ask = {"tool_name": "Bash", "input": {"command": "make"},
+               "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "make"}],
+                                           "behavior": "allow", "destination": "localSettings"}]}
+        result = claude_chat._permission_result(ask, {"behavior": "allow", "permissions": ask["permission_suggestions"],
+                                                      "answers": {"ignored": "for other tools"}})
+        self.assertEqual(result, {"behavior": "allow", "updatedInput": {"command": "make"},
+                                  "updatedPermissions": ask["permission_suggestions"]})
+        self.assertEqual(claude_chat._permission_result(ask, {"behavior": "deny", "interrupt": True}),
+                         {"behavior": "deny", "message": claude_chat.REJECT_MESSAGE, "interrupt": True})
+        for bad in ({"behavior": "maybe"},
+                    {"behavior": "allow", "permissions": [{"type": "setMode", "mode": "yolo", "destination": "session"}]},
+                    {"behavior": "allow", "permissions": [{"type": "setMode", "mode": "plan", "destination": "userSettings"}]},
+                    {"behavior": "allow", "permissions": [{"type": "setMode", "mode": "bypassPermissions", "destination": "session"}]},
+                    {"behavior": "allow", "permissions": {"type": "setMode"}}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                claude_chat._permission_result(ask, bad)
+        plan = {"tool_name": "ExitPlanMode", "input": {"plan": "1. do it"}}
+        mode = {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
+        self.assertEqual(claude_chat._permission_result(plan, {"behavior": "allow", "permissions": [mode]}),
+                         {"behavior": "allow", "updatedInput": {"plan": "1. do it"}, "updatedPermissions": [mode]})
+        with self.assertRaises(ValueError):
+            claude_chat._permission_result(QUESTION, {"behavior": "allow", "answers": {"Which color?": 3}})
+
+    async def test_prompts_reach_the_page_redacted_and_clean(self):
+        run = claude_chat.Run(None)
+        sent = []
+        run.subscribers[1] = sent.append
+        redact = claude_chat._redactor("sk-secret")
+        command = "curl -H 'x-api-key: sk-secret' https://example.com"
+        rule = {"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "curl -H 'x-api-key: sk-secret':*"}],
+                "behavior": "allow", "destination": "localSettings"}
+        await run.control({"type": "control_request", "request_id": "r1", "request": {
+            "subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": command},
+            "permission_suggestions": [rule], "decision_reason": "\x1b[1mSends a credential\x1b[0m", "default_to_no": True,
+        }}, redact)
+        [event] = [json.loads(raw) for raw in sent]
+        self.assertNotIn("sk-secret", json.dumps(event))
+        self.assertEqual((event["decision_reason"], event["default_to_no"]), ("Sends a credential", True))
+        self.assertEqual(run.events, [], "open prompts are re-sent from run.prompts, not from the replay")
+        request, _, kept = run.prompts["r1"]
+        result = claude_chat._permission_result(request, {"behavior": "allow", "permissions": event["permission_suggestions"]}, kept)
+        self.assertEqual(result, {"behavior": "allow", "updatedInput": {"command": command}, "updatedPermissions": [rule]})
 
     async def test_bash_mode_runs_command_and_reports_exit_code(self):
         ws = Socket([
@@ -370,7 +579,7 @@ class LimitedProcess(FakeProcess):
 class PlanLimitsTest(HarnessBase):
     def setUp(self):
         super().setUp()
-        p = patch.dict(claude_chat._limits, {"data": None, "at": 0.0, "stale": False, "error": None})
+        p = patch.dict(claude_chat._limits, {"data": None, "at": 0.0, "error": None})
         p.start()
         self.addCleanup(p.stop)
         self.calls = []
@@ -419,6 +628,32 @@ class PlanLimitsTest(HarnessBase):
         self.assertEqual(limits["fetched_at"], good["fetched_at"])
         self.assertIn("endpoint down", limits["error"])
 
+    async def test_refused_usage_endpoint_keeps_the_last_reading(self):
+        # What the CLI answers when /api/oauth/usage says 429 and its own snapshot is over an hour old.
+        refused = {"subscription_type": "pro", "rate_limits_available": True, "rate_limits": None}
+        with patch("app.claude_chat.asyncio.create_subprocess_exec", new=self.spawner(refused)):
+            empty = await claude_chat.plan_limits()
+        self.assertEqual((empty["available"], empty["windows"]), (True, []))
+        self.assertIn("rate-limited", empty["error"])
+        claude_chat._limits["at"] = 0.0
+        with patch("app.claude_chat.asyncio.create_subprocess_exec", new=self.spawner(USAGE_ANSWER)):
+            good = await claude_chat.plan_limits()
+        self.assertIsNone(good["error"])
+        claude_chat._limits["at"] = 0.0
+        with patch("app.claude_chat.asyncio.create_subprocess_exec", new=self.spawner(refused)):
+            with patch("app.claude_chat.time.time", return_value=1793100000.0):  # before every reset
+                limits = await claude_chat.plan_limits()
+            self.assertEqual(limits["windows"], good["windows"])
+            self.assertEqual(limits["fetched_at"], good["fetched_at"])
+            self.assertIn("rate-limited", limits["error"])
+            claude_chat._limits["at"] = 0.0
+            with patch("app.claude_chat.time.time", return_value=1793190001.0):  # the 5-hour window reset
+                limits = await claude_chat.plan_limits()
+                await claude_chat.plan_limits()
+            self.assertEqual((limits["windows"][0]["percent"], limits["windows"][0]["resets_at"]), (0.0, None))
+            self.assertEqual(limits["windows"][1:], good["windows"][1:])
+            self.assertEqual(len(self.calls), 4, "a refused probe is not retried before LIMITS_TTL")
+
     async def test_official_turn_moves_the_limits_live_and_custom_turn_does_not(self):
         async def spawn(*cmd, **kwargs):
             return LimitedProcess()
@@ -435,7 +670,7 @@ class PlanLimitsTest(HarnessBase):
         self.assertEqual(len(pushed), 1)
         self.assertEqual([(w["key"], w["percent"], w["resets_at"], w["severity"]) for w in pushed[0]["windows"]],
                          [("five_hour", 42.0, 1793190000, "warning"), ("seven_day", 10.0, 1793600000, "normal")])
-        self.assertTrue(claude_chat._limits["stale"], "the next read asks Claude Code for the scoped rows")
+        self.assertIsNone(claude_chat._limits["error"], "a turn's reading replaces a refused probe")
 
 
 class FolderGuardTest(unittest.TestCase):
@@ -513,6 +748,17 @@ class TranscriptTest(unittest.TestCase):
         self.assertEqual(thread.usage["input_tokens"], 5, "usage is counted once per API message")
         self.assertEqual(thread.custom_title, "Renamed")
         self.assertEqual(claude_transcript.first_prompt_title(lines[1]["message"]["content"]), "/context full")
+
+    def test_question_keeps_its_options_and_the_answers(self):
+        thread = claude_transcript.Thread()
+        thread.add({"type": "assistant", "message": {"id": "m1", "model": "claude-opus-5-5", "content": [
+            {"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": QUESTION["input"]}]}})
+        thread.add({"type": "user", "toolUseResult": {**QUESTION["input"], "answers": {"Which color?": "Blue"}},
+                    "message": {"content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]}})
+        [tool] = thread.messages[0]["parts"]
+        self.assertEqual(tool["summary"], "Which color?")
+        self.assertEqual(tool["questions"][0]["options"][1], {"label": "Blue", "description": "cool"})
+        self.assertEqual(tool["answers"], {"Which color?": "Blue"})
 
     def test_interrupt_placeholder_is_hidden(self):
         thread = claude_transcript.Thread()
