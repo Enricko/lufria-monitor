@@ -1,6 +1,7 @@
 import { Boxes, Cloud, ListChecks, Search, ServerCog, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { usePoll } from "../api";
+import { ManagedServices } from "../components/ManagedServices";
 import { Card, Empty, PageHeader, Skeleton, Status } from "../components/ui";
 import { bytes } from "../format";
 
@@ -21,6 +22,7 @@ export function Services() {
     return (
       <>
         <PageHeader title="Services" description="systemd, Docker and Cloudflare tunnel" />
+        <ManagedServices units={[]} containers={[]} />
         <div className="grid gap-4"><Skeleton className="h-72" /><Skeleton className="h-48" /></div>
       </>
     );
@@ -33,6 +35,11 @@ export function Services() {
       <PageHeader
         title="Services"
         description={`${systemd.running} services running · ${systemd.failed.length} failed · refreshes every 10 s`}
+      />
+
+      <ManagedServices
+        units={systemd.all.map((u) => u.unit)}
+        containers={docker.containers.map((c) => c.name)}
       />
 
       {systemd.failed.length > 0 && (

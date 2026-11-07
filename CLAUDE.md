@@ -36,6 +36,14 @@ This project is independent of the migration notes in ~/CLAUDE.md.
   Passkeys can't work on the LAN IP over http (not a secure context): sign in there with the QR code.
   Recovery when every device is lost: `cd backend && .venv/bin/python -m app.auth enroll` (one-time link, 15 min).
   Challenges and QR requests live in the uvicorn process memory, so a restart cancels pending ones.
+- Managed services (`backend/app/managed.py`, `/api/managed`, list in `data/services.json`): a tree where a child runs
+  on top of its parent. Start starts ancestors first (waiting for each `ready` check), stop stops descendants first,
+  restart brings back the descendants that were running. System units go through `sudo -n systemctl`; `command`
+  entries run as transient *user* units `lufria-svc-<id>.service` (systemd-run --user, lingering), so they survive a
+  dashboard restart but not a reboot. `match` regexes find copies started elsewhere (state `external`); stop/restart
+  kill those, skipping the dashboard's own cgroup and the user manager. Actions run in threads; `overview()` reads
+  the busy map *before* the states so a reply saying "not busy" never carries pre-action states. The dashboard's own
+  unit is refused (it can't stop itself). Mutating routes keep the `auth.same_origin` check: the list holds commands.
 - File viewer (`frontend/src/claude/FileViewer.tsx`, `/api/claude/dir|file|file/raw|file/stat`): reads anything the
   service user can read (no root allowlist; a login is already a root shell). Routes check Origin *and* Sec-Fetch-Site
   (`<img>` sends no Origin). Non-regular files are refused before open; PCI config/rom/resource is refused (wakes the dGPU).

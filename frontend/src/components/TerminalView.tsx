@@ -1,5 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { ClipboardPaste, Copy, Paperclip, X } from "lucide-react";
@@ -131,10 +132,10 @@ function bufferText(term: XTerm) {
   return lines.map((l) => l.trimEnd()).join("\n").trimEnd();
 }
 
-export type ConnState = "connecting" | "open" | "reconnecting";
+export type ConnState = "connecting" | "open" | "reconnecting" | "paused";
 
 /** Toolbar actions above the terminal, which phones need: they can't select, paste or drop files in xterm. */
-export type TerminalHandle = { copy: () => void; paste: () => void; attach: () => void };
+export type TerminalHandle = { copy: () => void; paste: () => void; attach: () => void; redraw: () => void };
 
 type Panel = { kind: "copy"; text: string } | { kind: "paste" };
 
@@ -142,11 +143,12 @@ type Panel = { kind: "copy"; text: string } | { kind: "paste" };
  * One terminal session. Survives disconnects: it tracks how many output bytes it has and asks the
  * server only for the rest on reconnect. Calls onExit once the session is gone for good.
  */
-export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
+export function TerminalView({ id, active, fontSize, onTitle, onConn, onExit, ref }: {
   id: string;
   active: boolean;
   fontSize: number;
   onTitle: (id: string, title: string) => void;
+  onConn?: (id: string, state: ConnState) => void;
   onExit: (id: string) => void;
   ref?: Ref<TerminalHandle>;
 }) {
@@ -167,8 +169,11 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
   const [dropping, setDropping] = useState(false);
   const sizeRef = useRef(fontSize);
   sizeRef.current = fontSize;
-  const callbacks = useRef({ onTitle, onExit });
-  callbacks.current = { onTitle, onExit };
+  const connectRef = useRef<(() => void) | null>(null);
+  const disconnectRef = useRef<(() => void) | null>(null);
+  const redrawRef = useRef<() => void>(() => {});
+  const callbacks = useRef({ onTitle, onConn, onExit });
+  callbacks.current = { onTitle, onConn, onExit };
 
   const flash = (text: string, ms = 1500, action?: () => void) => {
     setNotice({ text, action });
@@ -249,6 +254,9 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
     attach() {
       fileRef.current?.click();
     },
+    redraw() {
+      redrawRef.current();
+    },
   }), []);
 
   useEffect(() => {
@@ -273,8 +281,13 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
     let ws: WebSocket | null = null;
     let offset = -1; // output bytes received so far; -1 = none yet
     let done = false;
+    let wanted = active; // only the visible tab streams; the others reattach when selected
+    let opened = false; // term.open() has run, so output can be rendered
     let attempts = 0;
     let retry: ReturnType<typeof setTimeout>;
+    let fitRaf = 0;
+    let nudgeTimer: ReturnType<typeof setTimeout> | undefined;
+    let webgl: WebglAddon | null = null;
 
     const send = (data: string | Uint8Array) => {
       if (ws?.readyState === WebSocket.OPEN) ws.send(data);
@@ -285,17 +298,40 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
       callbacks.current.onExit(id);
     };
 
+    const disconnect = () => {
+      wanted = false;
+      clearTimeout(retry);
+      clearTimeout(nudgeTimer);
+      const sock = ws;
+      ws = null;
+      if (!sock) return;
+      sock.onopen = sock.onmessage = sock.onerror = sock.onclose = null;
+      sock.close();
+    };
+
     const connect = () => {
+      if (done || !wanted || !opened || ws) return;
+      setConn("connecting");
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const since = offset >= 0 ? `?since=${offset}` : "";
-      ws = new WebSocket(`${proto}://${location.host}/ws/terminal/${id}${since}`);
-      ws.binaryType = "arraybuffer";
-      ws.onopen = () => {
+      const sock = new WebSocket(`${proto}://${location.host}/ws/terminal/${id}${since}`);
+      ws = sock;
+      sock.binaryType = "arraybuffer";
+      sock.onopen = () => {
+        if (!wanted || ws !== sock) return;
         attempts = 0;
         setConn("open");
-        sendSize();
+        // Full-screen apps cache their layout and some ignore a resize to the same
+        // dimensions. A hidden/reloaded terminal can also carry a stale PTY width.
+        // Nudge by one column, then send the real size, so they always repaint.
+        sock.send(JSON.stringify({ type: "resize", cols: Math.max(2, term.cols - 1), rows: term.rows }));
+        clearTimeout(nudgeTimer);
+        nudgeTimer = setTimeout(() => {
+          if (ws === sock && sock.readyState === WebSocket.OPEN) sendSize();
+        }, 80);
       };
-      ws.onmessage = (ev) => {
+      sock.onmessage = (ev) => {
+        if (ws !== sock) return;
         if (typeof ev.data !== "string") {
           const bytes = new Uint8Array(ev.data);
           offset += bytes.length;
@@ -310,25 +346,47 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
           finish();
         }
       };
-      ws.onclose = (ev) => {
-        if (done) return;
+      sock.onclose = (ev) => {
+        if (ws === sock) ws = null;
+        if (done || !wanted) return;
         if (ev.code === 4404) finish();
         else reconnect();
       };
     };
 
     const reconnect = () => {
+      if (done || !wanted) return;
       setConn("reconnecting");
       // Check the session still exists first; this also catches an expired login (401 -> login page)
       retry = setTimeout(() => {
+        if (done || !wanted) return;
         api<{ sessions: { id: string }[] }>("/api/terminal")
           .then((r) => {
-            if (done) return;
+            if (done || !wanted) return;
             if (r.sessions.some((s) => s.id === id)) connect();
             else finish();
           })
-          .catch(() => !done && reconnect());
+          .catch(() => {
+            if (!done && wanted) reconnect();
+          });
       }, Math.min(1000 * 2 ** attempts++, 10000));
+    };
+
+    connectRef.current = () => {
+      if (done) return;
+      wanted = true;
+      connect();
+    };
+    disconnectRef.current = disconnect;
+    redrawRef.current = () => {
+      if (done) return;
+      const sock = ws;
+      if (!sock || sock.readyState !== WebSocket.OPEN) return;
+      sock.send(JSON.stringify({ type: "resize", cols: Math.max(2, term.cols - 1), rows: term.rows }));
+      clearTimeout(nudgeTimer);
+      nudgeTimer = setTimeout(() => {
+        if (ws === sock && sock.readyState === WebSocket.OPEN) sendSize();
+      }, 80);
     };
 
     term.onData((d) => {
@@ -393,26 +451,50 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
     });
 
     const ro = new ResizeObserver(() => {
-      if (el.offsetParent) fit.fit(); // skip while hidden: a 0x0 box would give a 1-column terminal
+      // Coalesce layout changes to one fit per frame: a dragged window or a phone keyboard can
+      // fire many of these, and every fit resizes the PTY.
+      cancelAnimationFrame(fitRaf);
+      fitRaf = requestAnimationFrame(() => {
+        if (el.offsetParent) fit.fit(); // skip while hidden: a 0x0 box would give a 1-column terminal
+      });
     });
 
     // Measure cell size with the real font, not the fallback it would use before Fira Code loads
     document.fonts.load(`${term.options.fontSize}px "Fira Code"`).finally(() => {
       if (done) return;
       term.open(el);
+      try {
+        // WebGL draws each frame on the GPU instead of rebuilding DOM rows: much smoother for
+        // full-screen apps (Claude Code, Codex, OpenCode) that repaint constantly. A browser
+        // without WebGL, or a lost context, falls back to xterm's DOM renderer automatically.
+        webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          webgl?.dispose();
+          webgl = null;
+        });
+        term.loadAddon(webgl);
+      } catch {
+        webgl = null;
+      }
       if (el.offsetParent) fit.fit();
       ro.observe(el);
-      connect();
+      opened = true;
+      if (wanted) connect();
     });
 
     return () => {
       done = true;
-      clearTimeout(retry);
+      disconnect();
+      cancelAnimationFrame(fitRaf);
       ro.disconnect();
       el.removeEventListener("pointerup", markInput, true);
       el.removeEventListener("keydown", markInput, true);
       el.removeEventListener("paste", onPaste, true);
-      ws?.close();
+      connectRef.current = null;
+      disconnectRef.current = null;
+      redrawRef.current = () => {};
+      webgl?.dispose();
+      webgl = null;
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -420,10 +502,20 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
   }, [id]);
 
   useEffect(() => {
-    if (!active) return;
+    callbacks.current.onConn?.(id, active ? conn : "paused");
+  }, [conn, id, active]);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.cursorBlink = active; // hidden tabs don't need a blink timer or repaints
+    if (!active) {
+      disconnectRef.current?.();
+      return;
+    }
     const raf = requestAnimationFrame(() => {
       fitRef.current?.fit();
       termRef.current?.focus();
+      connectRef.current?.();
     });
     return () => cancelAnimationFrame(raf);
   }, [active]);
@@ -506,7 +598,12 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
   const chip = "absolute top-3 right-4 z-20 max-w-[80%] truncate rounded-md bg-surface-2 px-2 py-1 text-xs";
 
   return (
-    <div className={active ? "flex h-full flex-col" : "hidden"}>
+    <div
+      role="tabpanel"
+      id={`terminal-panel-${id}`}
+      aria-labelledby={`terminal-tab-${id}`}
+      className={active ? "flex h-full flex-col" : "hidden"}
+    >
       <div className="relative min-h-0 flex-1 p-2" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
         <div ref={host} className="h-full" />
         <input
@@ -603,7 +700,7 @@ export function TerminalView({ id, active, fontSize, onTitle, onExit, ref }: {
             aria-pressed={k.ctrl ? ctrl : undefined}
             onPointerDown={(e) => e.preventDefault()} // keep focus (and the phone keyboard) in the terminal
             onClick={() => press(k)}
-            className={`h-10 min-w-11 shrink-0 cursor-pointer rounded-md px-2 font-mono text-sm ${
+            className={`h-11 min-w-11 shrink-0 cursor-pointer rounded-md px-2 font-mono text-sm ${
               k.ctrl && ctrl ? "bg-accent text-bg" : "bg-surface-2 text-fg-2"
             }`}
           >

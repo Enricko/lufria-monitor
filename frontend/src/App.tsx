@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useState } from "react";
 import { api, useLive } from "./api";
 import { NAV, Shell, type Tab } from "./components/Shell";
 import { Approve } from "./pages/Approve";
@@ -15,6 +15,9 @@ import { Claude } from "./pages/Claude";
 
 // xterm.js is the largest dependency; only load it when the Terminal tab is opened
 const Terminal = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.Terminal })));
+
+// The live sample updates this tree every second; memo keeps a hidden page from re-rendering at 1 Hz.
+const ClaudePage = memo(Claude);
 
 /** Page frame; the Terminal page sizes itself to the viewport minus this bottom padding (useFillHeight) */
 const PAGE = "mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8";
@@ -92,12 +95,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       {/* Stays mounted once opened, so Claude Code continues running in background when navigating menus */}
       {claudeOpened && (
         <div hidden={tab !== "claude"} className="h-full w-full min-h-0">
-          <Claude active={tab === "claude"} onRunningChange={setIsClaudeRunning} />
+          <ClaudePage active={tab === "claude"} onRunningChange={setIsClaudeRunning} />
         </div>
       )}
       {/* Stays mounted once opened, so its shells and scrollback survive switching tabs */}
       {terminalOpened && (
-        <div hidden={tab !== "terminal"} className={PAGE}>
+        <div hidden={tab !== "terminal"} className="h-full min-h-0">
           <Suspense fallback={null}>
             <Terminal active={tab === "terminal"} />
           </Suspense>

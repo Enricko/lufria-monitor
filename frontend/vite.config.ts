@@ -4,6 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Lowering xterm 6's prebuilt ESM below ES2021 corrupts requestMode and
+  // freezes terminal output on OpenCode/vim capability queries (xtermjs#5800).
+  build: { target: "es2022" },
   server: {
     host: true,
     proxy: {

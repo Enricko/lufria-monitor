@@ -42,6 +42,9 @@ Screenshots are generated from the real build with fake data by [tools/screensho
 - **Storage:** filesystem usage and SMART health (wear, power-on hours, reallocated sectors) for every disk.
 - **Network:** per-interface throughput and scheduled Ookla speed tests with history.
 - **Services:** watched systemd units, Docker containers, and Cloudflare Tunnel routes with backend checks.
+  - **Managed services:** start, stop and restart systemd units, containers or plain commands from the page, with logs.
+    A service can run on top of another (a simulator on its API): starting it starts the parent first, stopping the
+    parent stops it first, and restarting the parent brings it back.
 - **Terminal:** a login shell in the browser (xterm.js). [Details](docs/terminal.md).
   - Up to 8 tabs; sessions keep running across page reloads and dropped connections, and replay what you missed.
   - Copy and paste everywhere: Ctrl+C/Ctrl+V (⌘C/⌘V on a Mac), Copy/Paste buttons for phones, a selectable

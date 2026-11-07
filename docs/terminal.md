@@ -9,10 +9,16 @@ run commands on the server without SSH, from a desktop browser or a phone.
 
 - **Login shell** for the user the dashboard runs as (their shell from `/etc/passwd`, started with `-l` in
   their home directory), on its own PTY with `TERM=xterm-256color` and truecolor.
-- **Tabs:** up to 8 shells at once. The tab title follows the shell's window title.
+- **Tabs:** up to 8 shells at once. The tab title follows the shell's window title, and a dot shows whether that tab is connected.
+- **Full screen:** the expand button in the toolbar gives the terminal the whole screen; Esc leaves it.
+- **Status bar:** the bottom of the workspace shows the active connection state, session count and copy/paste shortcuts.
 - **Sessions survive the page.** Shells live in the dashboard process, not in the browser. Reloading, closing
   the tab, switching pages or losing the connection detaches; coming back reattaches to the same shell and
-  replays the output you missed (the last 512 KB per shell).
+  replays the output you missed (the last 512 KB per shell). Only the visible terminal tab streams: the other
+  shells keep running (and keep producing output) while their browser connection is closed, and they reattach
+  when you select them.
+- **Fast rendering.** xterm uses the WebGL renderer when the browser supports it, falling back to the DOM
+  renderer otherwise, so full-screen apps that repaint constantly (Claude Code, Codex, OpenCode) stay smooth.
 - **Phone keys:** a key bar with Esc, Tab, a sticky Ctrl, arrows, ^C and `| ~ / -`, which phone keyboards lack.
 - **Copy and paste** with the keyboard, the mouse, the toolbar buttons and in apps that grab the mouse, like
   Claude Code, tmux or vim (see below).
@@ -43,6 +49,8 @@ restart from. Use `tmux` or `nohup` for jobs that must outlive a restart.
 | **Copy** | With a selection: copies it. Without one: opens the scrollback as plain text, where you can select with the mouse or long-press on a phone, then **Copy selection** or **Copy all**. Lines the terminal wrapped are joined back together. Esc closes it. |
 | **Paste** | Reads the clipboard and pastes it into the shell. If the browser refuses (no permission, or plain-http access), a **Paste here** box opens: paste into it with the system menu, then **Send**. Ctrl/⌘+Enter also sends. |
 | **A↓ / A↑** | Text size from 8 to 28 px (default 14, or 12 on phones). Applies to every tab and to the Copy view, and is remembered per browser (`localStorage["terminal.fontSize"]`). The shell is resized to fit. |
+| **Redraw** | Nudges the shell's window size so a full-screen app (Claude Code, Codex, OpenCode, vim…) repaints after a layout change or a reconnect. |
+| **Full screen** | Maximizes the terminal workspace (tabs, toolbar, terminal and status bar). Esc leaves full screen. |
 
 ### Apps that grab the mouse (Claude Code, tmux, vim)
 
@@ -141,4 +149,10 @@ The full wire format and the REST routes are in [api.md](api.md).
 | Pasted image path stays plain text in Claude Code | Only PNG, JPEG, GIF and WebP attach (HEIC, BMP, SVG don't: export as PNG/JPEG). The path must be the whole paste, or the file is gone (7-day cleanup) |
 | Every shell vanished | `lufria-monitor.service` restarted (an update, a crash, or `systemctl restart`) |
 | "At most 8 terminals" | Close a tab, or `exit` a shell you don't need |
+| Terminal feels laggy | Only the visible tab streams; hidden tabs detach and reattach when selected. For the lowest latency, use the Tailscale/LAN address rather than the public Cloudflare hostname |
 | Garbled lines near the top after a reload | Output written at a different terminal width is replayed at the current width. `clear` or Ctrl+L redraws |
+| OpenCode/vim starts but all further output freezes in a production build | Keep Vite's `build.target` at `es2022`. Lowering xterm 6's ESM below ES2021 can corrupt its mode-query handler ([xterm.js #5800](https://github.com/xtermjs/xterm.js/issues/5800)). Rebuild the frontend, then reload the page |
+
+After building the frontend, run `cd frontend && npm run test:terminal-build`. This checks the mode-query
+handler from the generated JavaScript, including the startup queries OpenCode sends, alternate-screen
+output, and UTF-8 split across chunks. Development-mode checks alone do not catch this build regression.

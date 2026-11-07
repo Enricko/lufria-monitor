@@ -3,6 +3,7 @@ import { Bot, Cpu, Gauge, HardDrive, LogOut, Network, PanelLeftClose, PanelLeftO
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { usePoll, type Live } from "../api";
 import { watts } from "../format";
+import { Meter } from "./ui";
 
 export const NAV = [
   { id: "overview", label: "Overview", icon: Gauge },
@@ -134,7 +135,7 @@ export function Shell({ tab, live, connected, onLogout, children, isClaudeRunnin
   const { collapsed } = nav;
 
   return (
-    <div className={tab === "claude" ? "flex h-dvh min-h-0 flex-col overflow-hidden" : "min-h-screen"}
+    <div className={tab === "claude" || tab === "terminal" ? "flex h-dvh min-h-0 flex-col overflow-hidden" : "min-h-screen"}
       style={{ "--nav-w": `${nav.width}px` } as CSSProperties}>
       {/* Desktop sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-20 hidden w-(--nav-w) flex-col border-r border-line bg-bg py-5 lg:flex ${collapsed ? "px-2" : "px-3"}`}>
@@ -161,6 +162,9 @@ export function Shell({ tab, live, connected, onLogout, children, isClaudeRunnin
             >
               <Icon size={18} aria-hidden className={`shrink-0 ${tab === id ? "text-accent" : ""}`} />
               {!collapsed && <span className="truncate">{label}</span>}
+              {tab === id && (
+                <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" aria-hidden />
+              )}
               {id === "claude" && isClaudeRunning && collapsed && (
                 <span className="absolute right-2 top-2 flex size-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75"></span>
@@ -194,14 +198,22 @@ export function Shell({ tab, live, connected, onLogout, children, isClaudeRunnin
             <LiveStatus connected={connected} />
             <span className="tnum font-mono text-xs text-fg-2">{watts(live?.power.total, 0)}</span>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <div className="text-muted">CPU</div>
-              <div className="tnum font-mono text-fg-2">{live ? `${live.cpu.percent.toFixed(0)}%` : "–"}</div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-muted">CPU</span>
+                <span className="tnum font-mono text-fg-2">{live ? `${live.cpu.percent.toFixed(0)}%` : "–"}</span>
+              </div>
+              <Meter value={live?.cpu.percent ?? 0} label="CPU usage"
+                severity={(live?.cpu.percent ?? 0) >= 90 ? "warn" : "good"} />
             </div>
-            <div>
-              <div className="text-muted">Memory</div>
-              <div className="tnum font-mono text-fg-2">{live ? `${live.mem.percent.toFixed(0)}%` : "–"}</div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Memory</span>
+                <span className="tnum font-mono text-fg-2">{live ? `${live.mem.percent.toFixed(0)}%` : "–"}</span>
+              </div>
+              <Meter value={live?.mem.percent ?? 0} label="Memory usage"
+                severity={(live?.mem.percent ?? 0) >= 90 ? "warn" : "good"} />
             </div>
           </div>
           <button
@@ -256,7 +268,7 @@ export function Shell({ tab, live, connected, onLogout, children, isClaudeRunnin
         </nav>
       </header>
 
-      <main className={`min-h-0 flex-1 lg:pl-(--nav-w) ${tab === "claude" ? "overflow-hidden" : ""}`}>
+      <main className={`min-h-0 flex-1 lg:pl-(--nav-w) ${tab === "claude" || tab === "terminal" ? "overflow-hidden" : ""}`}>
         {children}
       </main>
     </div>

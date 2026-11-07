@@ -60,14 +60,16 @@ async def run() -> None:
         now = time.monotonic()
         dt = min(now - last, 5.0)  # cap gaps (e.g. after suspend) so energy isn't over-counted
         last = now
-        settings = db.get_settings()
+        settings = await loop.run_in_executor(None, db.get_settings)
         snap = await loop.run_in_executor(None, system.live, rates)
         snap["gpu"] = await loop.run_in_executor(None, gpus.snapshot)
         nv_temp = ((snap["gpu"]["nvidia"] or {}).get("metrics") or {}).get("temp")
         if nv_temp is not None:
             snap["temps"]["gpu"] = nv_temp
-        snap["power"] = power.snapshot(float(settings["overhead_watts"]),
-                                       snap["disk"]["per_disk"], snap["net"]["per_nic"], snap["gpu"])
+        # Both touch SQLite / sysfs / psutil; keep them off the event loop the terminal shares.
+        snap["power"] = await loop.run_in_executor(
+            None, power.snapshot, float(settings["overhead_watts"]),
+            snap["disk"]["per_disk"], snap["net"]["per_nic"], snap["gpu"])
         latest.clear()
         latest.update(snap)
         for q in list(subscribers):

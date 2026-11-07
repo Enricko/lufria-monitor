@@ -91,6 +91,15 @@ body.is-resizing-nav {
   user-select: none;
 }
 
+/* Terminal workspace goes borderless when the browser puts it full screen. */
+.terminal-shell:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

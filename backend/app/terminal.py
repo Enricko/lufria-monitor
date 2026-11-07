@@ -34,8 +34,9 @@ from .config import UPLOAD_DIR
 
 MAX_SESSIONS = 8
 SCROLLBACK = 512 * 1024        # output bytes kept per session and replayed on (re)attach
-HIGH_WATER = 1024 * 1024       # stop reading the PTY while a client has this much unsent output...
-LOW_WATER = 256 * 1024         # ...and resume once every client is below this
+HIGH_WATER = 256 * 1024        # stop reading the PTY while a client has this much unsent output...
+LOW_WATER = 64 * 1024          # ...and resume once every client is below this
+BATCH_DELAY = 0.004            # merge a burst of tiny TUI writes into one WebSocket frame
 MAX_PENDING_INPUT = 1024 * 1024
 MAX_UPLOAD = 100 * 1024 * 1024  # Cloudflare's tunnel refuses bigger request bodies anyway
 UPLOAD_TTL = 7 * 86400          # uploads are dropped after this; Claude Code keeps its own copy of images
@@ -285,7 +286,12 @@ async def serve(ws: WebSocket, s: Session, since: int | None) -> None:
 
     async def outgoing():
         while True:
-            items = [await client.queue.get()]
+            first = await client.queue.get()
+            items = [first]
+            # Full-screen apps write their spinner in many small chunks. Let the ones that arrive
+            # within a few milliseconds share one frame; a single large chunk goes out at once.
+            if first is not None and len(first) < 8192:
+                await asyncio.sleep(BATCH_DELAY)
             while not client.queue.empty():
                 items.append(client.queue.get_nowait())
             data = b"".join(i for i in items if i is not None)

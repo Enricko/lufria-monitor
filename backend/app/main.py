@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSoc
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, claude_analytics, claude_chat, claude_sessions, claude_workspace, db, energy, provider_api, providers, router_chat, router_sessions, sampler, terminal
+from . import auth, claude_analytics, claude_chat, claude_sessions, claude_workspace, db, energy, managed, provider_api, providers, router_chat, router_sessions, sampler, terminal
 from .collectors import services, speedtest, system
 from .config import FRONTEND_DIST, PUBLIC_ORIGIN, TARIFF_PRESETS
 
@@ -24,6 +24,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Lufria Monitor", lifespan=lifespan)
 app.add_middleware(auth.AuthMiddleware)
+
+
+@app.middleware("http")
+async def cache_headers(request: Request, call_next):
+    """Hashed assets never change; index.html must always be revalidated so a refresh
+    picks up a new build instead of an old cached bundle."""
+    response = await call_next(request)
+    if request.url.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
 app.include_router(provider_api.router)
 
 
@@ -223,6 +235,47 @@ async def get_services():
         _threaded(services.systemd, watched), _threaded(services.docker), _threaded(services.tunnel)
     )
     return {"systemd": systemd, "docker": docker, "tunnel": tunnel}
+
+
+@app.get("/api/managed")
+async def get_managed():
+    return await _threaded(managed.overview)
+
+
+@app.put("/api/managed")
+async def put_managed(body: dict, request: Request):
+    _same_origin(request)  # the list holds commands the dashboard runs
+    try:
+        await _threaded(managed.save, body.get("services"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await _threaded(managed.overview)
+
+
+@app.post("/api/managed/{sid}/{action}")
+async def managed_action(sid: str, action: str, request: Request):
+    _same_origin(request)
+    if action not in managed.ACTIONS:
+        raise HTTPException(404, f"action must be one of {list(managed.ACTIONS)}")
+    try:
+        await _threaded(managed.request, sid, action)
+    except KeyError:
+        raise HTTPException(404, "no such service")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except managed.Busy as e:
+        raise HTTPException(409, f"{e} is busy, wait for it to finish")
+    return {"ok": True}
+
+
+@app.get("/api/managed/{sid}/logs")
+async def managed_logs(sid: str, lines: int = managed.LOG_LINES):
+    try:
+        return await _threaded(managed.logs_for, sid, lines)
+    except KeyError:
+        raise HTTPException(404, "no such service")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.get("/api/power/summary")
@@ -555,12 +608,12 @@ if (FRONTEND_DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
 
-@app.get("/{path:path}", include_in_schema=False)
+@app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def spa(path: str):
     file = FRONTEND_DIST / path
     if path and file.is_file() and FRONTEND_DIST in file.resolve().parents:
-        return FileResponse(file)
+        return FileResponse(file, headers={"Cache-Control": "no-cache"})
     index = FRONTEND_DIST / "index.html"
     if index.exists():
-        return FileResponse(index)
+        return FileResponse(index, headers={"Cache-Control": "no-cache, must-revalidate"})
     raise HTTPException(404, "frontend not built - run `npm run build` in frontend/")
