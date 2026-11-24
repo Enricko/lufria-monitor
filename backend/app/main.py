@@ -2,10 +2,10 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, claude_analytics, claude_chat, claude_sessions, claude_workspace, db, energy, managed, provider_api, providers, router_chat, router_sessions, sampler, terminal
+from . import auth, public, claude_analytics, claude_chat, claude_sessions, claude_workspace, db, energy, managed, provider_api, providers, router_chat, router_sessions, sampler, terminal
 from .collectors import services, speedtest, system
 from .config import FRONTEND_DIST, PUBLIC_ORIGIN, TARIFF_PRESETS
 
@@ -199,6 +199,15 @@ async def passkey_remove(cred_id: str, request: Request):
 async def auth_logout(response: Response):
     response.delete_cookie(auth.COOKIE)
     return {"ok": True}
+
+
+@app.get("/api/public/profile")
+async def get_public_profile():
+    """Headline numbers for embedding elsewhere; off unless MONITOR_PUBLIC_PROFILE=1."""
+    if not public.ENABLED:
+        raise HTTPException(404, "Not Found")
+    data = await _threaded(public.profile)
+    return JSONResponse(data, headers={"Cache-Control": f"public, max-age={int(public.TTL)}"})
 
 
 @app.get("/api/specs")

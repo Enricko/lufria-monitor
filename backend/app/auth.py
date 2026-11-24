@@ -32,7 +32,7 @@ COOKIE = "lufria_monitor_session"
 SESSION_TTL = 30 * 86400
 ITERATIONS = 600_000
 # Paths reachable without a session: the SPA shell/assets (no data in them) and the login API
-PUBLIC_PREFIXES = ("/assets/", "/api/auth/")
+PUBLIC_PREFIXES = ("/assets/", "/api/auth/", "/api/public/")  # /api/public/* is opt-in, see public.py
 PUBLIC_EXACT = {"/", "/index.html", "/favicon.svg"}
 
 MAX_FAILS = 5

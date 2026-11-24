@@ -2,7 +2,7 @@
 
 Everything under `/api/` and `/ws/` needs the session cookie (`lufria_monitor_session`, 30 days), which a
 passkey sign-in, an approved QR sign-in or an enrolment link sets. The only exceptions are the `/api/auth/*`
-routes. Without a valid cookie you get a 401, or the WebSocket closes.
+routes and the opt-in [public profile](#public-profile). Without a valid cookie you get a 401, or the WebSocket closes.
 
 Passkeys are bound to `MONITOR_ORIGIN` (default `https://monitor.lufria.tech`). The password only exists to
 bootstrap: once one passkey is stored, `POST /api/auth/login` returns 403 and older sessions end.
@@ -108,3 +108,23 @@ Example:
 ```bash
 curl -b 'lufria_monitor_session=<cookie from the browser>' localhost:8090/api/power/summary
 ```
+
+## Public profile
+
+`GET /api/public/profile` needs no cookie, and exists only when the dashboard runs with
+`MONITOR_PUBLIC_PROFILE=1` (otherwise it is a 404). It is meant for embedding the server's vitals somewhere
+public, such as a GitHub profile card, so it returns headline numbers only: no hostnames, addresses, process or
+service names, paths or settings. Values are recomputed at most every 10 seconds (`Cache-Control: max-age=10`).
+
+```json
+{
+  "ts": 1795510599, "online": true,
+  "watts": 31.4, "cpu_percent": 6.2, "cpu_temp": 48.0, "mem_percent": 41.5, "uptime_s": 1209600,
+  "kwh_today": 0.412, "cost_today": 595, "kwh_month": 18.37, "cost_month": 26539,
+  "history_days": 400, "timezone": "Asia/Jakarta"
+}
+```
+
+`watts`, `cpu_temp` and `uptime_s` are `null` when the server can't measure them. Costs are whole Rupiah at the
+configured tariff. `history_days` counts from the oldest per-minute sample, so it stops at the retention limit
+(400 days).

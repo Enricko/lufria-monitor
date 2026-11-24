@@ -29,14 +29,16 @@ pick **Custom** and type the new rate, or update the table.
 | `PORT` | `8090` | `deploy/install.sh` | Port the dashboard listens on |
 | `HOST` | `0.0.0.0` | `deploy/install.sh` | Address to bind. `127.0.0.1` keeps it off the LAN (tunnel only) |
 | `APP_USER` | the user who ran `sudo` | `deploy/install.sh` | Non-root user the dashboard (and its terminal) runs as |
+| `MONITOR_PUBLIC_PROFILE` | off | dashboard | `1` turns on `GET /api/public/profile`, a few headline numbers anyone can read without signing in (see [api.md](api.md#public-profile)). For embedding the server's vitals elsewhere, such as a GitHub profile card |
 
-`deploy/install.sh` doesn't write `MONITOR_ORIGIN`. Set it with a drop-in, which survives reinstalls:
+`deploy/install.sh` doesn't write `MONITOR_ORIGIN` or `MONITOR_PUBLIC_PROFILE`. Set them with a drop-in, which survives reinstalls:
 
 ```bash
 sudo systemctl edit lufria-monitor
 # add:
 #   [Service]
 #   Environment=MONITOR_ORIGIN=https://monitor.example.com
+#   Environment=MONITOR_PUBLIC_PROFILE=1
 sudo systemctl restart lufria-monitor
 ```
 
